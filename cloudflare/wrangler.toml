@@ -4,8 +4,10 @@ compatibility_date = "2026-10-01"
 compatibility_flags = ["nodejs_compat"]
 workers_dev = false   # only reachable on your custom domain (where Cloudflare Access can protect it)
 
-# Uncomment and customize after the domain is active in Cloudflare DNS:
-# routes = [{ pattern = "agents.example.com", custom_domain = true }]
+routes = [
+  { pattern = "agents.zahid.win", custom_domain = true },
+  { pattern = "agentmesh.zahid.win", custom_domain = true }
+]
 
 # 120 requests / 60s per agent (or per IP for unauthenticated callers).
 [[ratelimits]]
