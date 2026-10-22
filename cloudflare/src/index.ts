@@ -1,10 +1,12 @@
 import { DurableObject } from "cloudflare:workers";
+import dashboard from "./dashboard.html";
 
 interface Env {
   ROOM: DurableObjectNamespace<Room>;
   // Comma-separated to allow rotation: "new,old". Each token must be >= 32 chars.
   AGENT_A_TOKEN: string;
   AGENT_B_TOKEN: string;
+  VIEWER_TOKEN?: string;
   LIMITER?: RateLimit;
 }
 type Agent = "agent-a" | "agent-b";
@@ -46,9 +48,9 @@ function optionalId(v: unknown): string | null {
 
 const sha256 = (s: string) => crypto.subtle.digest("SHA-256", new TextEncoder().encode(s));
 // Constant-time comparison of hashes so response timing doesn't leak token bytes.
-async function identify(token: string, env: Env): Promise<Agent | null> {
+async function identify(token: string, env: Env): Promise<Agent | "viewer" | null> {
   const presented = await sha256(token);
-  for (const [agent, secret] of [["agent-a", env.AGENT_A_TOKEN], ["agent-b", env.AGENT_B_TOKEN]] as const) {
+  for (const [agent, secret] of [["agent-a", env.AGENT_A_TOKEN], ["agent-b", env.AGENT_B_TOKEN], ["viewer", env.VIEWER_TOKEN]] as const) {
     for (const candidate of (secret ?? "").split(",").map(s => s.trim())) {
       if (candidate.length >= 32 && crypto.subtle.timingSafeEqual(presented, await sha256(candidate))) return agent;
     }
@@ -59,12 +61,25 @@ async function identify(token: string, env: Env): Promise<Agent | null> {
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
-    if (url.pathname === "/health" && request.method === "GET")
-      return json({ ok: true, service: "agentmesh" });
+    const dashboardHost = url.hostname === "agentmesh.zahid.win";
+    if (dashboardHost && request.method === "GET" &&
+        (url.pathname === "/" || url.pathname === "/index.html")) {
+      const nonce = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(16))));
+      return new Response(dashboard.replaceAll("__AGENTMESH_NONCE__", nonce), { headers: {
+        "content-type": "text/html; charset=utf-8",
+        "cache-control": "no-store",
+        "x-content-type-options": "nosniff",
+        "content-security-policy": `default-src 'none'; script-src 'nonce-${nonce}'; style-src 'nonce-${nonce}' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src 'self'; img-src 'self' data:; base-uri 'none'; frame-ancestors 'none'`,
+      }});
+    }
 
     const header = request.headers.get("authorization") ?? "";
     const token = header.startsWith("Bearer ") ? header.slice(7).trim() : "";
     const agent = token ? await identify(token, env) : null;
+    if (agent === "viewer" && (url.pathname !== "/v1/transcript" || request.method !== "GET"))
+      return error("viewer is read-only", 403);
+    if (url.pathname === "/health" && request.method === "GET")
+      return json({ ok: true, service: "agentmesh" });
     // Unauthenticated callers are limited per IP (slows token guessing / abuse); agents per identity.
     const limitKey = agent ?? `ip:${request.headers.get("cf-connecting-ip") ?? "unknown"}`;
     if (env.LIMITER && !(await env.LIMITER.limit({ key: limitKey })).success) return error("rate limited", 429);
@@ -100,6 +115,10 @@ export class Room extends DurableObject<Env> {
       CREATE TABLE IF NOT EXISTS events (
         id INTEGER PRIMARY KEY AUTOINCREMENT, recipient TEXT NOT NULL, type TEXT NOT NULL,
         ref TEXT NOT NULL, actor TEXT NOT NULL, created_at INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS audit (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, actor TEXT NOT NULL, action TEXT NOT NULL,
+        ref TEXT NOT NULL, created_at INTEGER NOT NULL
       );
       CREATE INDEX IF NOT EXISTS events_recipient ON events(recipient, id);
     `);
@@ -141,11 +160,31 @@ export class Room extends DurableObject<Env> {
     const url = new URL(request.url);
     const path = url.pathname.replace(/\/+$/, "") || "/";
     const method = request.method.toUpperCase();
-    const agent = request.headers.get("x-agentmesh-agent") as Agent;
-    if (!AGENTS.includes(agent)) return error("invalid agent context", 401);
-    const now = Date.now();
+    const agent = request.headers.get("x-agentmesh-agent") as Agent | "viewer";
 
     try {
+      // Viewer snapshots never enter agent helpers, mutation paths, or WebSocket handling.
+      if (agent === "viewer") {
+        if (path !== "/v1/transcript" || method !== "GET") return error("viewer is read-only", 403);
+        const rawAfter = url.searchParams.get("after");
+        const after = Number(rawAfter ?? 0);
+        if ((rawAfter !== null && !/^-?\d+$/.test(rawAfter)) || !Number.isSafeInteger(after))
+          return error("after must be an integer");
+        const events = this.sql("SELECT * FROM events WHERE id>? ORDER BY id ASC LIMIT 200", after).toArray();
+        return json({
+          messages: this.sql("SELECT * FROM messages ORDER BY created_at DESC LIMIT 500").toArray().reverse(),
+          tasks: this.sql("SELECT * FROM tasks ORDER BY created_at DESC LIMIT 200").toArray().reverse()
+            .map((r: any) => ({ ...r, acceptance_criteria: JSON.parse(String(r.acceptance_criteria)) })),
+          patches: this.sql("SELECT id, sender, title, task_id, created_at, length(text) AS size FROM patches ORDER BY created_at DESC LIMIT 50").toArray().reverse(),
+          audit: this.sql("SELECT * FROM audit ORDER BY id DESC LIMIT 200").toArray().reverse(),
+          events,
+          last_event_id: events.length ? events[events.length - 1].id : after,
+        });
+      }
+      if (!AGENTS.includes(agent)) return error("invalid agent context", 401);
+      if (path === "/v1/transcript") return error("viewer token required", 403);
+      const now = Date.now();
+
       if (path === "/v1/whoami" && method === "GET") return json({ agent });
 
       if (path === "/v1/inbox" && method === "GET") {
@@ -262,6 +301,7 @@ export class Room extends DurableObject<Env> {
         const id = crypto.randomUUID();
         this.sql("INSERT INTO messages (id, sender, recipient, text, task_id, created_at, acked_at) VALUES (?,?,?,?,?,?,NULL)",
           id, agent, b.to, b.text, optionalId(b.task_id), now);
+        this.sql("INSERT INTO audit (actor, action, ref, created_at) VALUES (?,?,?,?)", agent, "message.send", id, now);
         this.emit(b.to, agent, "message", id);
         return json({ id, created_at: now }, 201);
       }
@@ -320,6 +360,7 @@ export class Room extends DurableObject<Env> {
   async alarm() {
     const now = Date.now();
     this.sql("DELETE FROM events WHERE created_at < ?", now - 7 * DAY);
+    this.sql("DELETE FROM audit WHERE created_at < ?", now - 7 * DAY);
     this.sql("DELETE FROM messages WHERE acked_at IS NOT NULL AND acked_at < ?", now - 30 * DAY);
     this.sql("DELETE FROM patches WHERE created_at < ?", now - 30 * DAY);
     this.sql("DELETE FROM tasks WHERE status IN ('accepted','cancelled') AND updated_at < ?", now - 90 * DAY);
