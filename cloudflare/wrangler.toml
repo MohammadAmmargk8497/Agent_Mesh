@@ -1,0 +1,22 @@
+name = "agentmesh-api"
+main = "src/index.ts"
+compatibility_date = "2026-10-01"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = false   # only reachable on your custom domain (where Cloudflare Access can protect it)
+
+# Uncomment and customize after the domain is active in Cloudflare DNS:
+# routes = [{ pattern = "agents.example.com", custom_domain = true }]
+
+# 120 requests / 60s per agent (or per IP for unauthenticated callers).
+[[ratelimits]]
+name = "LIMITER"
+namespace_id = "1001"
+simple = { limit = 120, period = 60 }
+
+[[durable_objects.bindings]]
+name = "ROOM"
+class_name = "Room"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Room"]

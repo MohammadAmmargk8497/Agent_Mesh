@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agentmesh-client"
+version = "0.2.0"
+description = "Local MCP tools for the AgentMesh API"
+requires-python = ">=3.11"
+dependencies = ["httpx>=0.27,<1", "mcp>=1.9,<2"]
+
+[project.scripts]
+agentmesh-mcp = "agentmesh_mcp.server:main"
+agentmesh-notify = "agentmesh_mcp.server:notify"
+
+[tool.setuptools.packages.find]
+where = ["src"]
