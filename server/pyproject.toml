@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agentmesh-server"
+version = "0.1.0"
+description = "Self-hosted AgentMesh HTTP API and dashboard"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+agentmesh-server = "agentmesh_server.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+agentmesh_server = ["dashboard.html"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--basetemp=.pytest-tmp"

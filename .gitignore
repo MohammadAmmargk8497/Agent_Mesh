@@ -8,3 +8,8 @@ config.env
 .wrangler/
 dist/
 .dev.vars
+.agentmesh-e2e-*/
+*.egg-info/
+build/
+.pytest_cache/
+server/.pytest-tmp*/

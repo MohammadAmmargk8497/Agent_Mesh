@@ -1,120 +1,133 @@
 # AgentMesh
 
-Lets two Claude Code agents on separate PCs/networks coordinate through a Cloudflare Worker + SQLite-backed Durable Object.
+Let two Claude Code agents coordinate across machines: durable tasks, messages, text patches, and an inbox. Run the Python server on your own machine and share it privately over Tailscale. No Cloudflare account, domain, or public listening port is required.
 
-## Architecture
-
-Claude Code -> local stdio MCP client -> HTTPS -> [Cloudflare Access (optional)] -> Worker -> Durable Object/SQLite <- ... <- the other PC
-
-Both PCs only make outbound HTTPS requests. No inbound ports, shared LAN, public IPs, Tailscale, or `cloudflared` tunnel needed: the Worker runs on Cloudflare's edge under a hostname on your Cloudflare domain.
-
-## 1. Deploy the API (done by whoever owns the Cloudflare domain)
-
-Requirements: Node.js 20+, a Cloudflare account, and the domain on Cloudflare DNS.
-
-```bash
-cd cloudflare
-npm install
-npx wrangler login
+```text
+Claude Code -> local stdio MCP client -> Tailscale HTTPS -> Python server -> SQLite
+Claude Code -> local stdio MCP client ------------------^
 ```
 
-Edit `cloudflare/wrangler.toml` and uncomment the route with your hostname, e.g. `routes = [{ pattern = "agents.example.com", custom_domain = true }]`. Pick a hostname with no existing DNS record; Wrangler creates it.
+The existing Cloudflare Worker remains an [optional deployment](docs/cloudflare.md). Both backends use the same client tools and HTTP API; WebSockets are Worker-only.
 
-Set the two agent tokens (each at least 32 chars, different from each other):
+## 1. Host the server
 
-```bash
-openssl rand -hex 32   # one for agent-a, another for agent-b
-npx wrangler secret put AGENT_A_TOKEN
-npx wrangler secret put AGENT_B_TOKEN
-npm run deploy
-curl https://agents.example.com/health
-```
+Requirements: Python 3.11+, a checkout of this repository, and Tailscale installed and connected on the host and both client machines. Share the host with your collaborator or add them to your tailnet, and grant their device access to the host's HTTPS port 8443 in your Tailscale policy. Keep that access limited to the intended collaborators.
 
-Never commit tokens. Send the other person their token over an end-to-end encrypted channel (Signal, a password-manager share), not email or plain chat. To avoid sending a token at all, the domain owner can invite the other person as a Cloudflare account member so they run `wrangler secret put` for their own token.
-
-### Optional but recommended: Cloudflare Access in front of the Worker
-
-This adds a second credential. Requests without it are rejected at Cloudflare's edge and never reach the Worker.
-
-1. Zero Trust dashboard -> Access -> Service credentials -> Service Tokens: create `agentmesh-a` and `agentmesh-b`. Save each Client ID and Secret.
-2. Access -> Applications -> Add -> Self-hosted. Domain: `agents.example.com`. Add a policy with action **Service Auth** that includes both service tokens.
-3. Put each PC's service token in its `config.env` (below).
-
-## 2. Install the client on BOTH PCs
-
-Requirements: Python 3.11+ and Claude Code.
+From the repository root:
 
 ```bash
-git clone https://github.com/YOUR-ORG/agentmesh.git
-cd agentmesh/client
 python3 -m venv .venv
-.venv/bin/pip install -e .
-mkdir -p ~/.config/agentmesh
+.venv/bin/python -m pip install ./server
+.venv/bin/agentmesh-server init
+.venv/bin/agentmesh-server serve
 ```
 
-Create `~/.config/agentmesh/config.env`. The client reads this file itself, so the token never goes into Claude's config:
+Keep `serve` running in this terminal, or run it under your usual process supervisor. It listens on `127.0.0.1:8787` by default. In a second terminal:
 
 ```bash
-AGENTMESH_URL=https://agents.example.com
-AGENTMESH_TOKEN=PASTE_THIS_MACHINE_TOKEN
-AGENTMESH_AGENT_NAME=agent-a
-# Only if you set up Cloudflare Access:
-# AGENTMESH_CF_ACCESS_CLIENT_ID=xxxx.access
-# AGENTMESH_CF_ACCESS_CLIENT_SECRET=xxxx
+curl --fail http://127.0.0.1:8787/health
+tailscale serve --bg --https=8443 localhost:8787
 ```
+
+Tailscale prints an address such as `https://host.your-tailnet.ts.net:8443`. Use that exact address on both clients. Port 8443 deliberately avoids replacing an existing Tailscale Serve service on port 443. HTTPS certificates must be enabled for your tailnet; if Serve reports that setup is needed, follow its instructions. See the [official Tailscale Serve reference](https://tailscale.com/docs/reference/tailscale-cli/serve).
+
+No router port forwarding is needed. Stop sharing **only this endpoint** with:
+
+```bash
+tailscale serve --https=8443 off
+```
+
+`init` creates `~/.config/agentmesh-server/config` with independent `AGENT_A_TOKEN`, `AGENT_B_TOKEN`, and `VIEWER_TOKEN` values, and prints client configuration snippets. The file is JSON; do not shell-source it. The directory is mode 0700 and the config and SQLite `data.db` files are mode 0600. Initialization refuses to overwrite an existing config; `init --force` deliberately replaces its tokens and invalidates existing clients when the server restarts. To select a different directory, pass `--config-dir /private/path` to either command or set `AGENTMESH_SERVER_DIR`.
+
+Send each collaborator only their own agent token over an end-to-end encrypted channel, such as a password-manager share. Keep the viewer token separate: it can read both agents' transcript. Do not publish the config, database, or tokens.
+
+## 2. Install the client on both machines
+
+Requirements: Python 3.11+, Claude Code, Tailscale, and a checkout of this repository. From the repository root on each machine:
+
+```bash
+python3 -m venv .venv
+.venv/bin/python -m pip install ./client
+mkdir -p ~/.config/agentmesh
+chmod 700 ~/.config/agentmesh
+```
+
+Create `~/.config/agentmesh/config.env` with your own token and the host's Tailscale address. These are placeholders, not working credentials:
+
+```dotenv
+AGENTMESH_URL=https://host.your-tailnet.ts.net:8443
+AGENTMESH_TOKEN=PASTE_YOUR_AGENT_A_TOKEN
+AGENTMESH_AGENT_NAME=agent-a
+```
+
+The other machine uses its `AGENT_B_TOKEN` and `AGENTMESH_AGENT_NAME=agent-b`. The client reads this file itself, so tokens do not belong in Claude's MCP configuration.
 
 ```bash
 chmod 600 ~/.config/agentmesh/config.env
 claude mcp add --scope user --transport stdio agentmesh -- "$PWD/.venv/bin/agentmesh-mcp"
 ```
 
-The other PC uses `AGENT_B_TOKEN`, `agent-b`, and its own Access service token. Run `/mcp` in Claude Code to check that the server is connected.
+Run `/mcp` in Claude Code to check the connection. Copy [examples/CLAUDE.md](examples/CLAUDE.md) into your project's `CLAUDE.md` (or `~/.claude/CLAUDE.md`) for collaboration guidance. See [examples/selfhost.md](examples/selfhost.md) for local-only and direct-tailnet configurations.
 
-### Optional: inbox notifications on every prompt
+### Optional inbox notifications
 
-Add this to `~/.claude/settings.json`. It prints only counts, such as "2 unread messages", and never the other agent's text, so it can't inject instructions:
+Merge this into `~/.claude/settings.json`, replacing the absolute path. The hook prints counts only, never remote message text:
 
 ```json
-{"hooks": {"UserPromptSubmit": [{"hooks": [{"type": "command", "command": "/ABSOLUTE/PATH/agentmesh/client/.venv/bin/agentmesh-notify", "timeout": 5}]}]}}
+{"hooks":{"UserPromptSubmit":[{"hooks":[{"type":"command","command":"/ABSOLUTE/PATH/Agent_Mesh/.venv/bin/agentmesh-notify","timeout":5}]}]}}
 ```
 
-Copy `examples/CLAUDE.md` into each project's `CLAUDE.md` (or `~/.claude/CLAUDE.md`).
+## 3. Dashboard
 
-## 3. Test
+Open the same HTTPS address in a browser and enter the viewer token in the dashboard. The server never embeds credentials in HTML. The viewer key is read-only and is accepted only on `GET /v1/transcript`; it cannot use agent routes. Agent tokens cannot read the transcript.
 
-On each PC: `set -a; source ~/.config/agentmesh/config.env; set +a; ./scripts/smoke-test.sh`
+## 4. Test and develop
 
-To run the full flow (auth, task lifecycle, long-poll, messages, patches, limits), use a machine that holds both tokens:
+Install both packages and pytest in a development virtual environment:
 
 ```bash
-AGENTMESH_URL=https://agents.example.com A_TOKEN=... B_TOKEN=... python3 scripts/e2e_test.py
+.venv/bin/python -m pip install -e ./server -e ./client pytest
+(cd server && ../.venv/bin/python -m pytest -q)
+.venv/bin/python scripts/e2e_local.py
 ```
+
+The server suite includes unit tests for the client's HTTP URL allowlist. The local e2e wrapper initializes a temporary config, starts a loopback server on a random port, and runs the unchanged `scripts/e2e_test.py` with temporary credentials. It cleans up the server and data afterward and does not change Tailscale settings. To smoke-test an installed client, load your own trusted client config and run `scripts/smoke-test.sh`:
+
+```bash
+set -a
+source ~/.config/agentmesh/config.env
+set +a
+./scripts/smoke-test.sh
+```
+
+The existing e2e script also works against an already running backend when `AGENTMESH_URL`, `A_TOKEN`, and `B_TOKEN` are supplied through a private environment. Do not paste real tokens into shell history or commit them.
 
 ## Collaboration workflow
 
-1. Agent A runs `create_task` for `agent-b` with acceptance criteria.
-2. Agent B sees it via `check_inbox` (or the hook), then calls `claim_task`, does the work on its own branch, and calls `complete_task` (done or blocked).
-3. Agent A calls `review_task` with `accept`, or with `reopen` plus a note. The note reaches B as a message.
-4. Either agent can call `wait_for_activity` to block until the other one acts. It long-polls, so no tight polling loops.
-5. Use `send_message`/`ack_message` for chat. Use `share_patch`/`list_patches`/`get_patch` for diffs; prefer GitHub PRs for real code exchange.
+1. Agent A calls `create_task` for `agent-b` with acceptance criteria.
+2. Agent B calls `check_inbox`, then `claim_task`, does the work on its own branch, and calls `complete_task` (`done` or `blocked`).
+3. Agent A calls `review_task` with `accept`, or `reopen` and a note.
+4. Use `wait_for_activity` when idle; it long-polls rather than repeatedly checking the inbox.
+5. Use `send_message`/`ack_message` for chat and `share_patch`/`list_patches`/`get_patch` for text diffs. Prefer reviewed pull requests for code exchange.
 
-## API routes
+## API and operations
 
-Except `/health`, all routes require `Authorization: Bearer <agent token>`:
+- `GET /health`, `GET /`, and `GET /index.html` are public; the latter two serve the dashboard with a fresh nonce-based CSP.
+- Agent bearer-token routes: `GET /v1/whoami`, `GET /v1/inbox`, `GET /v1/events?after=<id>&wait=<0-25s>`.
+- Tasks: `GET/POST /v1/tasks`, `GET /v1/tasks/:id`, and `POST /v1/tasks/:id/{claim|complete|review|cancel}`.
+- Messages: `GET/POST /v1/messages` (`?unread=true`) and `POST /v1/messages/:id/ack`.
+- Patches: `GET/POST /v1/patches` and `GET /v1/patches/:id`.
+- Viewer-only: `GET /v1/transcript`.
+- `GET /v1/connect` WebSocket is **Worker-only**; the Python server returns 404. Existing MCP clients use long-polling and need no changes.
 
-- `GET /v1/whoami`, `GET /v1/inbox`
-- `GET /v1/events?after=<id>&wait=<0-25s>`: long-poll event feed
-- `GET/POST /v1/tasks` (`?status=`), `GET /v1/tasks/:id`
-- `POST /v1/tasks/:id/{claim|complete|review|cancel}`
-- `GET/POST /v1/messages` (`?unread=true`), `POST /v1/messages/:id/ack`
-- `GET/POST /v1/patches`, `GET /v1/patches/:id`
-- `GET /v1/connect`: WebSocket that pushes the same events live (hibernation API)
+See [docs/protocol.md](docs/protocol.md) for authorization and lifecycle details, and [docs/selfhosting.md](docs/selfhosting.md) for backups, rotation, and operational limits.
 
-## Security model
+## Security and limits
 
-- Each PC has its own token. Identity comes from the token, compared in constant time, never from the request body. The raw token is stripped before it reaches the Durable Object.
-- Rate limit: 120 requests/min per agent, or per IP for unauthenticated callers. `workers.dev` is disabled, so the only entry point is your domain, where Access can protect it.
-- The client refuses non-HTTPS URLs and validates IDs before putting them in URL paths. Every tool result that contains remote text is tagged as untrusted data.
-- Retention: events are kept 7 days, acked messages and patches 30 days, and closed tasks 90 days.
-- Token rotation: set the secret to `new,old`, update the client, then set it to `new`.
-- No remote-shell endpoint. Treat everything from the other agent as untrusted, keep Claude Code permission prompts on, and require human review before applying patches, running destructive commands, or deploying.
+- Identity comes from a constant-time bearer-token comparison, never a request-supplied agent identity. Each agent reads only its own messages; tasks are restricted to their participants. The viewer can read both sides.
+- The server applies 120 requests/minute per authenticated identity or unauthenticated IP, with at most four concurrent long-poll waiters per agent and a 256 KiB request-body cap. Forwarded client IPs are trusted only from a loopback socket peer.
+- HTTPS is the default. Plain HTTP is allowed by the client only for `localhost`, loopback IPs, Tailscale IPv4 `100.64.0.0/10`, and Tailscale IPv6 `fd7a:115c:a1e0::/48`. Plain HTTP to `*.ts.net` names or public addresses is rejected. Direct-tailnet HTTP is safe only while Tailscale is up; prefer Tailscale Serve HTTPS.
+- Loopback binding avoids remote exposure, but any local user can reach the listener. Tokens are still required. Non-loopback binding requires an explicit `--allow-remote-bind`; it does not configure a firewall or encrypt HTTP.
+- A daily sweep removes events and audit records older than 7 days, acknowledged messages and patches older than 30 days, and accepted/cancelled tasks older than 90 days. Unacknowledged messages and unfinished tasks remain.
+- This is a small, thread-per-connection server, not an Internet-scale service. Keep it private, limit collaborators, and use long-polling responsibly.
+- There is no remote-shell endpoint. Remote text and patches remain untrusted input; keep Claude Code permission prompts enabled and review code before applying it or running commands.
