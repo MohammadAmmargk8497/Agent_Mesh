@@ -14,6 +14,7 @@ import time
 from urllib.parse import parse_qs, urlsplit
 import uuid
 
+from . import coordination
 from .config import load_config
 from .state import AGENTS, MAX_WAIT_S, MAX_WAITERS_PER_AGENT, State, now_ms
 
@@ -92,9 +93,9 @@ def _number(value):
         return math.nan
 
 
-def _task_dict(row):
+def _task_dict(row, state):
     row["acceptance_criteria"] = json.loads(row["acceptance_criteria"])
-    return row
+    return coordination.task_fields(state, row)
 
 
 class AgentMeshHTTPServer(ThreadingHTTPServer):
@@ -305,12 +306,12 @@ class Handler(BaseHTTPRequestHandler):
                     if transaction:
                         state.db.commit()
             self._json(data, status)
-        except HttpError as exc:
+        except (HttpError, coordination.CoordinationError) as exc:
             # Invalid framing/body may leave unread bytes: never reuse it as
             # the next request on this connection.
             if exc.status in (400, 408, 413):
                 self.close_connection = True
-            self._json({"error": str(exc)}, exc.status)
+            self._json({"error": str(exc), **getattr(exc, "details", {})}, exc.status)
         except (TimeoutError, socket.timeout):
             self.close_connection = True
             self._json({"error": "request timed out"}, 408)
@@ -348,22 +349,26 @@ class Handler(BaseHTTPRequestHandler):
             events = rows("SELECT * FROM events WHERE id>? ORDER BY id ASC LIMIT 200", after)
             return {
                 "messages": rows("SELECT * FROM messages ORDER BY created_at DESC LIMIT 500")[::-1],
-                "tasks": [_task_dict(row) for row in rows("SELECT * FROM tasks ORDER BY created_at DESC LIMIT 200")[::-1]],
+                "tasks": [_task_dict(row, state) for row in rows("SELECT * FROM tasks ORDER BY created_at DESC LIMIT 200")[::-1]],
                 "patches": rows("SELECT id,sender,title,task_id,created_at,length(text) AS size FROM patches ORDER BY created_at DESC LIMIT 50")[::-1],
                 "audit": rows("SELECT * FROM audit ORDER BY id DESC LIMIT 200")[::-1],
                 "events": events,
                 "last_event_id": events[-1]["id"] if events else after,
+                **coordination.snapshot(state, now),
             }, 200
         if path == "/v1/transcript":
             raise HttpError(403, "viewer token required")
+        coordinated = coordination.route(self, state, agent, path, query, now)
+        if coordinated is not None:
+            return coordinated
         if path == "/v1/whoami" and method == "GET":
             return {"agent": agent}, 200
         if path == "/v1/inbox" and method == "GET":
             return {
                 "agent": agent,
                 "unread_messages": rows("SELECT * FROM messages WHERE recipient=? AND acked_at IS NULL ORDER BY created_at ASC LIMIT 100", agent),
-                "assigned_tasks": [_task_dict(row) for row in rows("SELECT * FROM tasks WHERE assignee=? AND status IN ('open','in_progress') ORDER BY created_at ASC LIMIT 100", agent)],
-                "tasks_to_review": [_task_dict(row) for row in rows("SELECT * FROM tasks WHERE created_by=? AND assignee<>? AND status IN ('done','blocked') ORDER BY updated_at ASC LIMIT 100", agent, agent)],
+                "assigned_tasks": [_task_dict(row, state) for row in rows("SELECT * FROM tasks WHERE assignee=? AND status IN ('open','in_progress') ORDER BY created_at ASC LIMIT 100", agent)],
+                "tasks_to_review": [_task_dict(row, state) for row in rows("SELECT * FROM tasks WHERE created_by=? AND assignee<>? AND status IN ('done','blocked') ORDER BY updated_at ASC LIMIT 100", agent, agent)],
                 "last_event_id": state.last_event_id(agent),
             }, 200
         if path == "/v1/events" and method == "GET":
@@ -402,7 +407,7 @@ class Handler(BaseHTTPRequestHandler):
             tasks = rows("SELECT * FROM tasks WHERE (assignee=? OR created_by=?) " +
                          ("AND status=? " if status else "") + "ORDER BY created_at DESC LIMIT 100",
                          agent, agent, *((status,) if status else ()))
-            return {"tasks": [_task_dict(row) for row in tasks]}, 200
+            return {"tasks": [_task_dict(row, state) for row in tasks]}, 200
         if path == "/v1/tasks" and method == "POST":
             body = self._body_json()
             if not valid_string(body.get("title"), 200) or not valid_string(body.get("description"), 8000):
@@ -413,9 +418,12 @@ class Handler(BaseHTTPRequestHandler):
             criteria = [] if criteria is None else criteria
             if not isinstance(criteria, list) or len(criteria) > 20 or any(not valid_string(value, 500) for value in criteria):
                 raise HttpError(400, "acceptance_criteria must contain at most 20 strings")
+            options = coordination.task_options(state, agent, body)
             task_id = str(uuid.uuid4())
             db.execute("INSERT INTO tasks (id,title,description,assignee,created_by,status,acceptance_criteria,result,created_at,updated_at) VALUES (?,?,?,?,?,'open',?,NULL,?,?)",
                        (task_id, body["title"].strip(JS_WHITESPACE), body["description"].strip(JS_WHITESPACE), body["assignee"], agent, json.dumps(criteria), now, now))
+            coordination.save_task_options(state, task_id, options)
+            coordination.news(state, agent, "task_created", task_id, "Task created", now)
             state.emit(body["assignee"], agent, "task_assigned", task_id)
             return {"id": task_id, "status": "open", "created_by": agent}, 201
         task_match = TASK_PATH.fullmatch(path)
@@ -424,7 +432,7 @@ class Handler(BaseHTTPRequestHandler):
             matches = rows("SELECT * FROM tasks WHERE id=?", task_id)
             if not matches or (matches[0]["assignee"] != agent and matches[0]["created_by"] != agent):
                 raise HttpError(404, "task not found")
-            task = _task_dict(matches[0])
+            task = _task_dict(matches[0], state)
             if method == "GET" and action is None:
                 return {"task": task}, 200
             if method != "POST":
@@ -434,8 +442,11 @@ class Handler(BaseHTTPRequestHandler):
                     raise HttpError(403, "only assignee may claim")
                 if task["status"] != "open":
                     raise HttpError(409, "task is not open")
+                if task["waiting_on"]:
+                    raise HttpError(409, "waiting on dependencies")
                 db.execute("UPDATE tasks SET status='in_progress',updated_at=? WHERE id=?", (now, task_id))
                 state.emit(task["created_by"], agent, "task_claimed", task_id)
+                coordination.news(state, agent, "task_claimed", task_id, "Task claimed", now)
                 return {"id": task_id, "status": "in_progress"}, 200
             if action == "complete":
                 if task["assignee"] != agent:
@@ -450,6 +461,9 @@ class Handler(BaseHTTPRequestHandler):
                 status = body.get("status", "done")
                 db.execute("UPDATE tasks SET status=?,result=?,updated_at=? WHERE id=?", (status, body["summary"], now, task_id))
                 state.emit(task["created_by"], agent, "task_" + status, task_id)
+                coordination.news(state, agent, "task_" + status, task_id, "Task " + status, now)
+                if status == "done":
+                    coordination.unblocked(state, agent, task_id, now)
                 return {"id": task_id, "status": status}, 200
             if action == "review":
                 if task["created_by"] != agent:
@@ -467,6 +481,9 @@ class Handler(BaseHTTPRequestHandler):
                     db.execute("INSERT INTO messages (id,sender,recipient,text,task_id,created_at,acked_at) VALUES (?,?,?,?,?,?,NULL)",
                                (str(uuid.uuid4()), agent, task["assignee"], f"[review: {body['decision']}] {body['note']}", task_id, now))
                 state.emit(task["assignee"], agent, "task_accepted" if status == "accepted" else "task_reopened", task_id)
+                coordination.news(state, agent, "task_accepted" if status == "accepted" else "task_reopened", task_id, "Task " + ("accepted" if status == "accepted" else "reopened"), now)
+                if status == "accepted" and task["status"] != "done":
+                    coordination.unblocked(state, agent, task_id, now)
                 return {"id": task_id, "status": status}, 200
             if action == "cancel":
                 if task["created_by"] != agent:
@@ -475,6 +492,7 @@ class Handler(BaseHTTPRequestHandler):
                     raise HttpError(409, "task is already closed")
                 db.execute("UPDATE tasks SET status='cancelled',updated_at=? WHERE id=?", (now, task_id))
                 state.emit(task["assignee"], agent, "task_cancelled", task_id)
+                coordination.news(state, agent, "task_cancelled", task_id, "Task cancelled", now)
                 return {"id": task_id, "status": "cancelled"}, 200
         if path == "/v1/messages" and method == "GET":
             unread = param("unread") == "true"

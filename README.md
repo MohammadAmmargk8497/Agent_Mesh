@@ -186,6 +186,113 @@ Open the Host's complete HTTPS address in a browser on a computer connected to T
 
 The dashboard remembers the Viewer key in that browser until you sign out. Use a trusted browser account and sign out when finished, especially on a shared computer. Only share the Viewer key with someone allowed to see both sides of the conversation.
 
+## Coordination features
+
+Both hosting options also support a shared project plan and lightweight team
+coordination. These use the same server, accounts and database; no additional
+service is needed. Update the Host's server and both clients to use the new tools.
+Older clients can continue using messages, tasks and patches unchanged.
+
+- **Master prompt:** write the project description in sections. Either assistant
+  can edit; each edit records its author, revision and content hash. Submit it
+  for both assistants to approve and lock v1. Later edits start a new amendment
+  and vote rather than silently changing the agreed version.
+- **Task board:** tasks can name an owner, file areas and dependencies. The lead
+  (the first assistant to edit the master prompt) can propose tasks from a locked
+  plan: the first builds the skeleton/interface contract and the rest wait for
+  it. Finishing a dependency notifies the owners whose work is unblocked.
+- **File claims:** reserve a repository-relative file for 30 minutes before
+  editing it. Check, renew or release the reservation with the tools below.
+  Claims coordinate matching paths; they do not copy files or lock your editor.
+- **Huddles:** hold a brainstorm, design discussion, review or standup. Both
+  assistants can post ideas, back them or push back. The huddle shows whose input
+  is missing; its owner closes with a decision shared in team news and can turn
+  the decision into tasks.
+- **Questions and news:** ask the other assistant a question for later, answer
+  received questions and read changes since your last news check. Each assistant's
+  news position is saved on the server.
+
+Ask Claude in plain language, or refer to the MCP tools directly:
+
+| Purpose | Tools |
+| --- | --- |
+| Shared plan | `get_master_prompt`, `edit_master_section`, `submit_master_prompt`, `vote_master_prompt` |
+| Tasks | Existing `create_task`, `claim_task`, `complete_task`, `review_task`; new `propose_tasks` |
+| Files | `check_file`, `claim_file`, `release_file` |
+| Discussions | `start_huddle`, `list_huddles`, `get_huddle`, `post_to_huddle`, `close_huddle` |
+| Questions | `ask_question`, `list_questions`, `answer_question` |
+| Updates | `get_news`, `announce_commit` |
+
+For example: **“Use AgentMesh to write a Goals section for our master prompt,
+then submit it for approval.”** Or: **“Check who holds README.md before editing
+it, and claim it if it is free.”** The dashboard adds read-only master prompt,
+task-board, huddle, claim and news panels. Only agent tools can change them.
+
+### Optional prompt and file-edit hooks
+
+After installing the updated client, merge this into your existing Claude Code
+settings (do not replace other settings or hooks). The example is for
+macOS/Linux/WSL; replace `/ABSOLUTE/PATH/Agent_Mesh` with your installation folder.
+On Windows, use the corresponding absolute `.venv\Scripts\agentmesh-notify.exe`
+and `agentmesh-guard.exe` paths, with the quoting required by your shell.
+
+```json
+{
+  "hooks": {
+    "UserPromptSubmit": [{
+      "hooks": [{
+        "type": "command",
+        "command": "\"/ABSOLUTE/PATH/Agent_Mesh/.venv/bin/agentmesh-notify\"",
+        "timeout": 10
+      }]
+    }],
+    "PreToolUse": [{
+      "matcher": "Write|Edit|MultiEdit|NotebookEdit",
+      "hooks": [{
+        "type": "command",
+        "command": "\"/ABSOLUTE/PATH/Agent_Mesh/.venv/bin/agentmesh-guard\"",
+        "timeout": 10
+      }]
+    }]
+  }
+}
+```
+
+`agentmesh-notify` checks inbox and unseen news before each prompt. It prints
+counts and validated event kinds/agent IDs only, never remote prose, and tells
+Claude to call `get_news`. It peeks without consuming your news. Each prompt
+makes two requests, within the existing 120-per-minute limit.
+
+`agentmesh-guard` checks a file's claim before supported edit tools run. If the
+other member holds it, Claude asks for approval; set `AGENTMESH_CLAIM_MODE=deny`
+in the hook's environment to refuse instead. The helper uses the repository
+containing the hook's working directory and makes one request. It is silent
+when the file is free **or a check fails**. This is an advisory, fail-open guard,
+not a security boundary: shell commands, other editors, outages and claim races
+can bypass it. Keep normal permission prompts enabled and coordinate before
+overriding a claim. It does not automatically claim files for you.
+
+### Optional commit announcements
+
+From each local project repository, run the updated client's helper once:
+
+```bash
+/ABSOLUTE/PATH/Agent_Mesh/.venv/bin/agentmesh-commit-hook --install
+```
+
+It installs a marked `.git/hooks/post-commit` hook and refuses to overwrite
+someone else's hook. If you already have a hook, integrate a call to
+`agentmesh-commit-hook` manually. On Windows, use the installed executable in
+`.venv\Scripts`. Linked worktrees and custom Git hook directories may require
+manual integration; inspect your hook location first.
+
+Each commit then announces its hash, subject, branch and changed file paths to
+the team. It never uploads file contents, pushes commits, runs remote commands
+or blocks a commit if the server is unavailable. You can also call
+`announce_commit` explicitly. Use your usual version-control workflow to share
+the actual changes. The [protocol reference](docs/protocol.md#coordination-features)
+documents permissions, validation limits and retention for all coordination data.
+
 ## Troubleshooting
 
 | Symptom | Fix |

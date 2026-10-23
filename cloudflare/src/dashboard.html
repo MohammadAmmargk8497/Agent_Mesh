@@ -64,6 +64,9 @@
     .message .meta{font-size:10px}
     .sidebar{display:grid;grid-template-rows:minmax(0,1.2fr) minmax(0,.8fr) minmax(0,1fr);gap:18px;min-height:0}
     .items{overflow:auto;padding:0 18px;overscroll-behavior:contain}
+    .coordination{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px;margin-top:18px}
+    .coordination .items{max-height:480px}
+    .coordination .description{white-space:pre-wrap;overflow-wrap:anywhere}
     .item{border-bottom:1px solid var(--line-soft);padding:14px 0;overflow-wrap:anywhere}
     .item:last-child{border-bottom:0}
     .item-heading{display:flex;justify-content:space-between;align-items:baseline;gap:12px}
@@ -92,6 +95,7 @@
       .subtitle{font-size:12px}
       .actions{flex-direction:column}
       .workspace{height:auto;min-height:0;grid-template-columns:1fr}
+      .coordination{grid-template-columns:1fr}
       .messages{height:60dvh;min-height:300px;flex:auto;padding:14px}
       .sidebar{grid-template-rows:auto auto auto}
       .items{max-height:55dvh}
@@ -155,7 +159,7 @@
       </section>
       <aside class="sidebar" aria-label="Shared work">
         <section class="panel" aria-labelledby="tasks-title">
-          <div class="panel-heading"><div><div class="panel-label">Work in progress</div><h2 id="tasks-title">Tasks</h2></div><span id="task-count" class="count">0</span></div>
+          <div class="panel-heading"><div><div class="panel-label">Owners · dependencies · contracts</div><h2 id="tasks-title">Task board</h2></div><span id="task-count" class="count">0</span></div>
           <div id="tasks" class="items" tabindex="0" aria-label="Task list"></div>
         </section>
         <section class="panel" aria-labelledby="patches-title">
@@ -168,6 +172,24 @@
         </section>
       </aside>
     </main>
+    <section id="coordination" class="coordination" aria-label="Project coordination" hidden>
+      <section class="panel" aria-labelledby="master-title">
+        <div class="panel-heading"><div><div class="panel-label">Shared project description · read-only</div><h2 id="master-title">Master prompt</h2></div><span id="master-count" class="count">0</span></div>
+        <div id="master" class="items" tabindex="0" aria-label="Master prompt sections and votes"></div>
+      </section>
+      <section class="panel" aria-labelledby="huddles-title">
+        <div class="panel-heading"><div><div class="panel-label">Ideas · feedback · decisions</div><h2 id="huddles-title">Huddles</h2></div><span id="huddle-count" class="count">0</span></div>
+        <div id="huddles" class="items" tabindex="0" aria-label="Huddle posts and decisions"></div>
+      </section>
+      <section class="panel" aria-labelledby="claims-title">
+        <div class="panel-heading"><div><div class="panel-label">Active 30-minute reservations</div><h2 id="claims-title">File claims</h2></div><span id="claim-count" class="count">0</span></div>
+        <div id="claims" class="items" tabindex="0" aria-label="Active file claims"></div>
+      </section>
+      <section class="panel" aria-labelledby="news-title">
+        <div class="panel-heading"><div><div class="panel-label">Latest 200 · 30-day retention</div><h2 id="news-title">Team news</h2></div><span id="news-count" class="count">0</span></div>
+        <div id="news" class="items" tabindex="0" aria-label="Team news feed"></div>
+      </section>
+    </section>
     <footer class="footer"><span>Read-only · Full snapshots every 4 seconds</span><span>Latest 500 messages / 200 tasks / 50 patches · retention applies</span></footer>
   </div>
   <script nonce="__AGENTMESH_NONCE__">
@@ -226,14 +248,15 @@
         storage.remove("agentmesh-viewer");
         get("viewer-key").value = "";
         get("workspace").hidden = true;
+        get("coordination").hidden = true;
         get("sign-out").hidden = true;
         get("auth").hidden = false;
         get("auth-error").textContent = message;
         get("auth-error").hidden = !message;
         get("last-updated").textContent = "—";
         get("last-updated").removeAttribute("datetime");
-        for (const id of ["messages", "tasks", "patches", "audit"]) get(id).replaceChildren();
-        for (const id of ["message-count", "task-count", "patch-count", "audit-count"]) get(id).textContent = "0";
+        for (const id of ["messages", "tasks", "patches", "audit", "master", "huddles", "claims", "news"]) get(id).replaceChildren();
+        for (const id of ["message-count", "task-count", "patch-count", "audit-count", "master-count", "huddle-count", "claim-count", "news-count"]) get(id).textContent = "0";
         setStatus(message ? "Access denied · enter a viewer key" : "Viewer key required", message ? "warning" : "");
         if (focus) get("viewer-key").focus();
       }
@@ -269,12 +292,16 @@
           const state = row.status === "blocked" ? " blocked" : ["open", "in_progress"].includes(row.status) ? " active" : "";
           heading.append(element("h3", "item-title", row.title), element("span", "badge" + state, row.status));
           card.append(heading, element("div", "meta " + agentClass(row.assignee), row.created_by + " → " + row.assignee));
+          card.append(element("div", "meta", "Owner: " + (row.owner || "—") + (row.contract ? " · Contract / skeleton" : "")));
+          if (row.waiting_on && row.waiting_on.length) card.append(element("div", "meta", "Waiting on: " + row.waiting_on.join(", ")));
           const details = element("details");
           details.dataset.id = String(row.id);
           details.open = open.has(String(row.id));
           details.append(element("summary", "", "Task details"));
           const body = element("div", "details-body");
           body.append(element("p", "description", row.description));
+          if (row.file_areas && row.file_areas.length) body.append(element("div", "meta", "File areas: " + row.file_areas.join(", ")));
+          if (row.depends_on && row.depends_on.length) body.append(element("div", "meta", "Depends on: " + row.depends_on.join(", ")));
           if (Array.isArray(row.acceptance_criteria) && row.acceptance_criteria.length) {
             body.append(element("h3", "", "Acceptance criteria"));
             const list = element("ul");
@@ -323,6 +350,74 @@
         if (first || atBottom) container.scrollTop = container.scrollHeight;
         get("audit-count").textContent = String(rows.length);
       }
+      function renderMaster(master) {
+        const container = get("master");
+        const fragment = document.createDocumentFragment();
+        const state = master.state || {};
+        const status = element("article", "item");
+        status.append(element("h3", "item-title", (state.status || "draft") + " · revision " + (state.revision || 0) + " · locked v" + (state.locked_version || 0)));
+        status.append(element("div", "meta", "Lead: " + (state.lead || "—") + " · voting round " + (state.round || 0)));
+        if (master.waiting_on && master.waiting_on.length) status.append(element("div", "meta", "Waiting on: " + master.waiting_on.join(", ")));
+        for (const vote of master.votes || []) status.append(element("div", "meta", vote.agent + ": " + vote.decision));
+        fragment.append(status);
+        for (const row of master.sections || []) {
+          const card = element("article", "item");
+          card.append(element("h3", "item-title", row.section), element("p", "description", row.text));
+          card.append(element("div", "meta", row.author + " · revision " + row.revision));
+          card.append(element("div", "meta", "SHA-256: " + row.sha256));
+          fragment.append(card);
+        }
+        container.replaceChildren(fragment);
+        if (!(master.sections || []).length) empty(container, "No shared project description yet.");
+        get("master-count").textContent = String((master.sections || []).length);
+      }
+      function renderHuddles(rows) {
+        const container = get("huddles");
+        const fragment = document.createDocumentFragment();
+        for (const row of rows) {
+          const card = element("article", "item");
+          card.append(element("h3", "item-title", row.topic));
+          card.append(element("div", "meta", row.kind + " · " + row.status + " · owner " + row.owner));
+          if (row.waiting_on && row.waiting_on.length) card.append(element("div", "meta", "Waiting on: " + row.waiting_on.join(", ")));
+          for (const post of row.posts || []) {
+            card.append(element("div", "meta", post.author + " · " + post.kind + (post.ref_post_id ? " · re: " + post.ref_post_id : "")));
+            card.append(element("p", "description", post.text));
+          }
+          if (row.decision) card.append(element("h4", "item-title", "Decision"), element("p", "description", row.decision));
+          fragment.append(card);
+        }
+        container.replaceChildren(fragment);
+        if (!rows.length) empty(container, "No huddles yet.");
+        get("huddle-count").textContent = String(rows.length);
+      }
+      function renderClaims(rows) {
+        const container = get("claims");
+        const fragment = document.createDocumentFragment();
+        for (const row of rows) {
+          const card = element("article", "item");
+          card.append(element("h3", "item-title", row.path));
+          card.append(element("div", "meta " + agentClass(row.agent), row.agent + " · expires " + timestamp(row.expires_at)));
+          if (row.task_id) card.append(element("div", "meta", "Task " + row.task_id));
+          fragment.append(card);
+        }
+        container.replaceChildren(fragment);
+        if (!rows.length) empty(container, "No active file claims.");
+        get("claim-count").textContent = String(rows.length);
+      }
+      function renderNews(rows) {
+        const container = get("news");
+        const fragment = document.createDocumentFragment();
+        for (const row of rows) {
+          const card = element("article", "item");
+          card.append(element("h3", "item-title", row.summary));
+          card.append(element("div", "meta " + agentClass(row.actor), row.kind + " · " + row.actor + " · " + timestamp(row.created_at)));
+          card.append(element("div", "meta", row.ref));
+          fragment.append(card);
+        }
+        container.replaceChildren(fragment);
+        if (!rows.length) empty(container, "No coordination news yet.");
+        get("news-count").textContent = String(rows.length);
+      }
       async function poll() {
         if (!key || controller) return;
         const currentSession = session;
@@ -342,7 +437,10 @@
           const data = await response.json();
           if (session !== currentSession) return;
           if (![data.messages, data.tasks, data.patches, data.audit, data.events].every(Array.isArray) || !Number.isSafeInteger(data.last_event_id)) throw new Error("Invalid snapshot");
-          for (const [name, render] of [["messages", renderMessages], ["tasks", renderTasks], ["patches", renderPatches], ["audit", renderAudit]]) {
+          // Defaults keep this dashboard usable with older server snapshots.
+          data.master_prompt = data.master_prompt || {};
+          for (const name of ["huddles", "claims", "news"]) if (!Array.isArray(data[name])) data[name] = [];
+          for (const [name, render] of [["messages", renderMessages], ["tasks", renderTasks], ["patches", renderPatches], ["audit", renderAudit], ["master_prompt", renderMaster], ["huddles", renderHuddles], ["claims", renderClaims], ["news", renderNews]]) {
             const signature = JSON.stringify(data[name]);
             if (signature !== rendered[name]) {
               render(data[name]);
@@ -368,6 +466,7 @@
         get("auth-error").hidden = true;
         get("auth").hidden = true;
         get("workspace").hidden = false;
+        get("coordination").hidden = false;
         get("sign-out").hidden = false;
         setStatus("Connecting…");
         poll();

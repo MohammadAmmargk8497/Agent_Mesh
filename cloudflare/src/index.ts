@@ -1,5 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 import dashboard from "./dashboard.html";
+import { Coordination, HttpError } from "./coordination";
 
 interface Env {
   ROOM: DurableObjectNamespace<Room>;
@@ -18,9 +19,6 @@ const MAX_SOCKETS_PER_AGENT = 4;
 const DAY = 86_400_000;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-class HttpError extends Error {
-  constructor(public status: number, message: string) { super(message); }
-}
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), { status, headers: {
     "content-type": "application/json; charset=utf-8", "cache-control": "no-store",
@@ -94,6 +92,8 @@ export default {
 
 export class Room extends DurableObject<Env> {
   private waiters = new Set<() => void>();
+  private coordination: Coordination;
+  private deferredPushes: Array<() => void> | null = null;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -122,6 +122,9 @@ export class Room extends DurableObject<Env> {
       );
       CREATE INDEX IF NOT EXISTS events_recipient ON events(recipient, id);
     `);
+    this.coordination = new Coordination((query, ...args) => this.sql(query, ...args),
+      (recipient, actor, type, ref, includeSelf) => this.emit(recipient, actor, type, ref, includeSelf),
+      callback => this.atomic(callback));
     ctx.blockConcurrencyWhile(async () => {
       if ((await ctx.storage.getAlarm()) === null) await ctx.storage.setAlarm(Date.now() + DAY);
     });
@@ -129,16 +132,30 @@ export class Room extends DurableObject<Env> {
 
   private sql(query: string, ...args: unknown[]) { return this.ctx.storage.sql.exec(query, ...args); }
 
+  private atomic<T>(callback: () => T): T {
+    const pushes: Array<() => void> = [];
+    this.deferredPushes = pushes;
+    let result: T;
+    try { result = this.ctx.storage.transactionSync(callback); }
+    finally { this.deferredPushes = null; }
+    for (const push of pushes) push();
+    return result;
+  }
+
   // Records a durable event for the recipient, then pushes it to live WebSockets and long-pollers.
-  private emit(recipient: string, actor: Agent, type: string, ref: string) {
-    if (recipient === actor) return;
+  private emit(recipient: string, actor: Agent, type: string, ref: string, includeSelf = false) {
+    if (recipient === actor && !includeSelf) return;
     const created_at = Date.now();
     const id = this.sql("INSERT INTO events (recipient, type, ref, actor, created_at) VALUES (?,?,?,?,?) RETURNING id",
       recipient, type, ref, actor, created_at).one().id;
     const event = JSON.stringify({ type: "event", event: { id, type, ref, actor, created_at } });
-    for (const ws of this.ctx.getWebSockets(recipient)) { try { ws.send(event); } catch {} }
-    for (const wake of this.waiters) wake();
-    this.waiters.clear();
+    const push = () => {
+      for (const ws of this.ctx.getWebSockets(recipient)) { try { ws.send(event); } catch {} }
+      for (const wake of this.waiters) wake();
+      this.waiters.clear();
+    };
+    if (this.deferredPushes) this.deferredPushes.push(push);
+    else push();
   }
 
   private lastEventId(agent: Agent): number {
@@ -148,7 +165,7 @@ export class Room extends DurableObject<Env> {
   private task(id: string, agent: Agent): any {
     const t = this.sql("SELECT * FROM tasks WHERE id=?", id).toArray()[0] as any;
     if (!t || (t.assignee !== agent && t.created_by !== agent)) throw new HttpError(404, "task not found");
-    return { ...t, acceptance_criteria: JSON.parse(String(t.acceptance_criteria)) };
+    return this.coordination.parseTask(t);
   }
 
   private setStatus(id: string, status: string, now: number, result?: string) {
@@ -174,21 +191,25 @@ export class Room extends DurableObject<Env> {
         return json({
           messages: this.sql("SELECT * FROM messages ORDER BY created_at DESC LIMIT 500").toArray().reverse(),
           tasks: this.sql("SELECT * FROM tasks ORDER BY created_at DESC LIMIT 200").toArray().reverse()
-            .map((r: any) => ({ ...r, acceptance_criteria: JSON.parse(String(r.acceptance_criteria)) })),
+            .map((r: any) => this.coordination.parseTask(r)),
           patches: this.sql("SELECT id, sender, title, task_id, created_at, length(text) AS size FROM patches ORDER BY created_at DESC LIMIT 50").toArray().reverse(),
           audit: this.sql("SELECT * FROM audit ORDER BY id DESC LIMIT 200").toArray().reverse(),
           events,
           last_event_id: events.length ? events[events.length - 1].id : after,
+          ...this.coordination.snapshot(Date.now()),
         });
       }
       if (!AGENTS.includes(agent)) return error("invalid agent context", 401);
       if (path === "/v1/transcript") return error("viewer token required", 403);
       const now = Date.now();
+      // Additive authenticated routes: /v1/master, /v1/huddles, /v1/claims, /v1/news.
+      const coordinationResponse = await this.coordination.route(request, agent, path, method, url, now);
+      if (coordinationResponse) return coordinationResponse;
 
       if (path === "/v1/whoami" && method === "GET") return json({ agent });
 
       if (path === "/v1/inbox" && method === "GET") {
-        const parse = (r: any) => ({ ...r, acceptance_criteria: JSON.parse(String(r.acceptance_criteria)) });
+        const parse = (r: any) => this.coordination.parseTask(r);
         return json({
           agent,
           unread_messages: this.sql("SELECT * FROM messages WHERE recipient=? AND acked_at IS NULL ORDER BY created_at ASC LIMIT 100", agent).toArray(),
@@ -221,21 +242,26 @@ export class Room extends DurableObject<Env> {
         const rows = this.sql(
           `SELECT * FROM tasks WHERE (assignee = ? OR created_by = ?) ${status ? "AND status = ?" : ""} ORDER BY created_at DESC LIMIT 100`,
           agent, agent, ...(status ? [status] : [])).toArray();
-        return json({ tasks: rows.map((r: any) => ({ ...r, acceptance_criteria: JSON.parse(String(r.acceptance_criteria)) })) });
+        return json({ tasks: rows.map((r: any) => this.coordination.parseTask(r)) });
       }
       if (path === "/v1/tasks" && method === "POST") {
         const b = await readJson(request);
-        if (!validString(b.title, 200) || !validString(b.description, 8000)) return error("title and description are required");
-        if (!AGENTS.includes(b.assignee)) return error("assignee must be agent-a or agent-b");
-        const criteria = b.acceptance_criteria ?? [];
-        if (!Array.isArray(criteria) || criteria.length > 20 || criteria.some((x: unknown) => !validString(x, 500))) return error("acceptance_criteria must contain at most 20 strings");
-        const id = crypto.randomUUID();
-        this.sql(
-          `INSERT INTO tasks (id, title, description, assignee, created_by, status, acceptance_criteria, result, created_at, updated_at)
-           VALUES (?,?,?,?,?,'open',?,NULL,?,?)`,
-          id, b.title.trim(), b.description.trim(), b.assignee, agent, JSON.stringify(criteria), now, now);
-        this.emit(b.assignee, agent, "task_assigned", id);
-        return json({ id, status: "open", created_by: agent }, 201);
+        return this.atomic(() => {
+          if (!validString(b.title, 200) || !validString(b.description, 8000)) return error("title and description are required");
+          if (!AGENTS.includes(b.assignee)) return error("assignee must be agent-a or agent-b");
+          const criteria = b.acceptance_criteria ?? [];
+          if (!Array.isArray(criteria) || criteria.length > 20 || criteria.some((x: unknown) => !validString(x, 500))) return error("acceptance_criteria must contain at most 20 strings");
+          const extras = this.coordination.taskExtras(b, agent);
+          const id = crypto.randomUUID();
+          this.sql(
+            `INSERT INTO tasks (id, title, description, assignee, created_by, status, acceptance_criteria, result, created_at, updated_at, owner, file_areas, depends_on, contract)
+             VALUES (?,?,?,?,?,'open',?,NULL,?,?,?,?,?,?)`,
+            id, b.title.trim(), b.description.trim(), b.assignee, agent, JSON.stringify(criteria), now, now,
+            extras.owner, JSON.stringify(extras.file_areas), JSON.stringify(extras.depends_on), Number(extras.contract));
+          this.emit(b.assignee, agent, "task_assigned", id);
+          this.coordination.taskNews(agent, "task_created", id, now);
+          return json({ id, status: "open", created_by: agent }, 201);
+        });
       }
 
       const tm = path.match(/^\/v1\/tasks\/([0-9a-f-]{36})(?:\/(claim|complete|review|cancel))?$/i);
@@ -246,44 +272,69 @@ export class Room extends DurableObject<Env> {
         if (method !== "POST") return error("method not allowed", 405);
 
         if (action === "claim") {
-          if (task.assignee !== agent) return error("only assignee may claim", 403);
-          if (task.status !== "open") return error("task is not open", 409);
-          this.setStatus(id, "in_progress", now);
-          this.emit(task.created_by, agent, "task_claimed", id);
-          return json({ id, status: "in_progress" });
+          // Claim and cancel deliberately ignore their request body, as older clients expect.
+          return this.atomic(() => {
+            const task = this.task(id, agent);
+            if (task.assignee !== agent) return error("only assignee may claim", 403);
+            if (task.status !== "open") return error("task is not open", 409);
+            if (task.waiting_on.length) return error("waiting on dependencies", 409);
+            this.setStatus(id, "in_progress", now);
+            this.emit(task.created_by, agent, "task_claimed", id);
+            this.coordination.taskNews(agent, "task_claimed", id, now);
+            return json({ id, status: "in_progress" });
+          });
         }
         if (action === "complete") {
           if (task.assignee !== agent) return error("only assignee may complete", 403);
           if (task.status !== "in_progress") return error("claim the task before completing it", 409);
           const b = await readJson(request);
-          if (!validString(b.summary, 8000)) return error("summary is required");
-          if (b.status !== undefined && b.status !== "done" && b.status !== "blocked") return error("status must be done or blocked");
-          const status = b.status ?? "done";
-          this.setStatus(id, status, now, b.summary);
-          this.emit(task.created_by, agent, `task_${status}`, id);
-          return json({ id, status });
+          return this.atomic(() => {
+            // Parsing can yield to another request; validate the current row, not the earlier snapshot.
+            const task = this.task(id, agent);
+            if (task.assignee !== agent) return error("only assignee may complete", 403);
+            if (task.status !== "in_progress") return error("claim the task before completing it", 409);
+            if (!validString(b.summary, 8000)) return error("summary is required");
+            if (b.status !== undefined && b.status !== "done" && b.status !== "blocked") return error("status must be done or blocked");
+            const status = b.status ?? "done";
+            this.setStatus(id, status, now, b.summary);
+            this.emit(task.created_by, agent, `task_${status}`, id);
+            this.coordination.taskNews(agent, `task_${status}`, id, now);
+            if (status === "done") this.coordination.taskUnblocked(id, agent, now);
+            return json({ id, status });
+          });
         }
         if (action === "review") {
           if (task.created_by !== agent) return error("only the creator may review", 403);
           if (task.status !== "done" && task.status !== "blocked") return error("task is not awaiting review", 409);
           const b = await readJson(request);
-          if (b.decision !== "accept" && b.decision !== "reopen") return error("decision must be accept or reopen");
-          if (b.note !== undefined && !validString(b.note, 8000)) return error("note must be a non-empty string");
-          const status = b.decision === "accept" ? "accepted" : "open";
-          this.setStatus(id, status, now);
-          if (b.note && task.assignee !== agent) {
-            this.sql("INSERT INTO messages (id, sender, recipient, text, task_id, created_at, acked_at) VALUES (?,?,?,?,?,?,NULL)",
-              crypto.randomUUID(), agent, task.assignee, `[review: ${b.decision}] ${b.note}`, id, now);
-          }
-          this.emit(task.assignee, agent, status === "accepted" ? "task_accepted" : "task_reopened", id);
-          return json({ id, status });
+          return this.atomic(() => {
+            const task = this.task(id, agent);
+            if (task.created_by !== agent) return error("only the creator may review", 403);
+            if (task.status !== "done" && task.status !== "blocked") return error("task is not awaiting review", 409);
+            if (b.decision !== "accept" && b.decision !== "reopen") return error("decision must be accept or reopen");
+            if (b.note !== undefined && !validString(b.note, 8000)) return error("note must be a non-empty string");
+            const status = b.decision === "accept" ? "accepted" : "open";
+            this.setStatus(id, status, now);
+            if (b.note && task.assignee !== agent) {
+              this.sql("INSERT INTO messages (id, sender, recipient, text, task_id, created_at, acked_at) VALUES (?,?,?,?,?,?,NULL)",
+                crypto.randomUUID(), agent, task.assignee, `[review: ${b.decision}] ${b.note}`, id, now);
+            }
+            this.emit(task.assignee, agent, status === "accepted" ? "task_accepted" : "task_reopened", id);
+            this.coordination.taskNews(agent, status === "accepted" ? "task_accepted" : "task_reopened", id, now);
+            if (status === "accepted" && task.status !== "done") this.coordination.taskUnblocked(id, agent, now);
+            return json({ id, status });
+          });
         }
         if (action === "cancel") {
-          if (task.created_by !== agent) return error("only the creator may cancel", 403);
-          if (task.status === "accepted" || task.status === "cancelled") return error("task is already closed", 409);
-          this.setStatus(id, "cancelled", now);
-          this.emit(task.assignee, agent, "task_cancelled", id);
-          return json({ id, status: "cancelled" });
+          return this.atomic(() => {
+            const task = this.task(id, agent);
+            if (task.created_by !== agent) return error("only the creator may cancel", 403);
+            if (task.status === "accepted" || task.status === "cancelled") return error("task is already closed", 409);
+            this.setStatus(id, "cancelled", now);
+            this.emit(task.assignee, agent, "task_cancelled", id);
+            this.coordination.taskNews(agent, "task_cancelled", id, now);
+            return json({ id, status: "cancelled" });
+          });
         }
       }
 
@@ -364,6 +415,7 @@ export class Room extends DurableObject<Env> {
     this.sql("DELETE FROM messages WHERE acked_at IS NOT NULL AND acked_at < ?", now - 30 * DAY);
     this.sql("DELETE FROM patches WHERE created_at < ?", now - 30 * DAY);
     this.sql("DELETE FROM tasks WHERE status IN ('accepted','cancelled') AND updated_at < ?", now - 90 * DAY);
+    this.coordination.sweep(now);
     await this.ctx.storage.setAlarm(now + DAY);
   }
 }

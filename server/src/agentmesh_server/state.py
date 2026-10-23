@@ -92,6 +92,8 @@ class State:
         self.db = sqlite3.connect(path, check_same_thread=False, isolation_level=None)
         self.db.row_factory = sqlite3.Row
         self.db.executescript(SCHEMA)
+        from .coordination import migrate
+        migrate(self.db)
         self.stop = threading.Event()
         self.sweep()
         self.retention_thread = threading.Thread(target=self._retention, daemon=True,
@@ -132,6 +134,8 @@ class State:
             ):
                 removed[table] = self.db.execute(
                     f"DELETE FROM {table} WHERE {predicate}", (cutoff,)).rowcount
+            from .coordination import sweep
+            removed.update(sweep(self.db, now))
             return removed
 
     def _retention(self):

@@ -122,7 +122,7 @@ def test_viewer_transcript_is_read_only_and_requires_viewer_token(api):
     assert api.get("/v1/transcript").status == 403
     transcript = api.get("/v1/transcript", "viewer")
     assert transcript.status == 200
-    assert set(transcript.json()) == {"messages", "tasks", "patches", "audit", "events", "last_event_id"}
+    assert {"messages", "tasks", "patches", "audit", "events", "last_event_id"} <= set(transcript.json())
     assert transcript.json()["tasks"][0]["acceptance_criteria"] == ["covered by tests"]
     for method, path in (("GET", "/health"), ("GET", "/v1/whoami"), ("GET", "/v1/inbox"),
                          ("GET", "/v1/events"), ("GET", "/v1/patches"), ("POST", "/v1/messages"),

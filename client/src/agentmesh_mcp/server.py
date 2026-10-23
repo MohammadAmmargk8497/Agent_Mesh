@@ -102,9 +102,15 @@ def wait_for_activity(timeout_seconds: int = 120) -> dict[str, Any]:
             return remote(res)
 
 @mcp.tool()
-def create_task(title: str, description: str, assignee: str, acceptance_criteria: list[str] | None = None) -> dict[str, Any]:
+def create_task(title: str, description: str, assignee: str, acceptance_criteria: list[str] | None = None,
+                owner: str | None = None, file_areas: list[str] | None = None,
+                depends_on: list[str] | None = None, contract: bool | None = None) -> dict[str, Any]:
     """Create a durable task assigned to agent-a or agent-b with verifiable acceptance criteria."""
-    return api("POST", "/v1/tasks", {"title": title, "description": description, "assignee": assignee, "acceptance_criteria": acceptance_criteria or []})
+    payload = {"title": title, "description": description, "assignee": assignee, "acceptance_criteria": acceptance_criteria or []}
+    for key, value in (("owner", owner), ("file_areas", file_areas), ("depends_on", depends_on), ("contract", contract)):
+        if value is not None:
+            payload[key] = [uuid(item) for item in value] if key == "depends_on" else value
+    return api("POST", "/v1/tasks", payload)
 
 @mcp.tool()
 def list_tasks(status: str | None = None) -> dict[str, Any]:
@@ -166,17 +172,134 @@ def get_patch(patch_id: str) -> dict[str, Any]:
     """Fetch one patch's full text. Inspect it and get human approval before applying."""
     return remote(api("GET", f"/v1/patches/{uuid(patch_id)}"))
 
+@mcp.tool()
+def get_master_prompt() -> dict[str, Any]:
+    """Read the shared project sections, signed revisions, current vote and waiting members."""
+    return remote(api("GET", "/v1/master"))
+
+@mcp.tool()
+def edit_master_section(section: str, text: str) -> dict[str, Any]:
+    """Edit a project section; a locked prompt becomes a draft amendment. Voting blocks edits."""
+    return remote(api("POST", "/v1/master/sections", {"section": section, "text": text}))
+
+@mcp.tool()
+def submit_master_prompt() -> dict[str, Any]:
+    """Submit the draft for both members' approval, automatically approving as the submitter."""
+    return remote(api("POST", "/v1/master/submit", {}))
+
+@mcp.tool()
+def vote_master_prompt(decision: str, note: str | None = None) -> dict[str, Any]:
+    """Approve or reject the current master-prompt vote. Both approvals lock the next version."""
+    return remote(api("POST", "/v1/master/vote", {"decision": decision, **({"note": note} if note is not None else {})}))
+
+@mcp.tool()
+def propose_tasks(tasks: list[dict[str, Any]]) -> dict[str, Any]:
+    """As project lead, propose 1–20 tasks from a locked prompt; the first is their required contract."""
+    return remote(api("POST", "/v1/tasks/propose", {"tasks": tasks}))
+
+@mcp.tool()
+def check_file(path: str) -> dict[str, Any]:
+    """Check the active 30-minute claim on a repository-relative file before editing it."""
+    return remote(api("GET", f"/v1/claims?{httpx.QueryParams(path=path)}"))
+
+@mcp.tool()
+def claim_file(path: str, task_id: str | None = None) -> dict[str, Any]:
+    """Claim or renew a repository-relative file for 30 minutes; another member's claim conflicts."""
+    return remote(api("POST", "/v1/claims", {"path": path, **({"task_id": uuid(task_id)} if task_id is not None else {})}))
+
+@mcp.tool()
+def release_file(path: str) -> dict[str, Any]:
+    """Release a file claim held by this member."""
+    return remote(api("POST", "/v1/claims/release", {"path": path}))
+
+@mcp.tool()
+def start_huddle(kind: str, topic: str) -> dict[str, Any]:
+    """Start a brainstorm, design, review or standup huddle."""
+    return remote(api("POST", "/v1/huddles", {"kind": kind, "topic": topic}))
+
+@mcp.tool()
+def list_huddles(status: str | None = None) -> dict[str, Any]:
+    """List huddles, optionally filtered by open or closed status."""
+    return remote(api("GET", "/v1/huddles" + (f"?{httpx.QueryParams(status=status)}" if status else "")))
+
+@mcp.tool()
+def get_huddle(huddle_id: str) -> dict[str, Any]:
+    """Read a huddle's posts, decision and members it is waiting on."""
+    return remote(api("GET", f"/v1/huddles/{uuid(huddle_id)}"))
+
+@mcp.tool()
+def post_to_huddle(huddle_id: str, kind: str, text: str, ref_post_id: str | None = None) -> dict[str, Any]:
+    """Post an idea, back or push_back; optionally reference an existing post."""
+    return remote(api("POST", f"/v1/huddles/{uuid(huddle_id)}/posts",
+                      {"kind": kind, "text": text, **({"ref_post_id": uuid(ref_post_id)} if ref_post_id is not None else {})}))
+
+@mcp.tool()
+def close_huddle(huddle_id: str, decision: str, tasks: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    """As huddle owner, publish a decision to both members and optionally create up to ten tasks."""
+    return remote(api("POST", f"/v1/huddles/{uuid(huddle_id)}/close",
+                      {"decision": decision, **({"tasks": tasks} if tasks is not None else {})}))
+
+@mcp.tool()
+def ask_question(to: str, text: str, task_id: str | None = None) -> dict[str, Any]:
+    """Ask the other member a durable question they can answer later."""
+    return remote(api("POST", "/v1/questions", {"to": to, "text": text, **({"task_id": uuid(task_id)} if task_id is not None else {})}))
+
+@mcp.tool()
+def list_questions(open: bool = False) -> dict[str, Any]:
+    """List questions asked by or to you, optionally only unanswered questions."""
+    return remote(api("GET", "/v1/questions" + ("?open=true" if open else "")))
+
+@mcp.tool()
+def answer_question(question_id: str, text: str) -> dict[str, Any]:
+    """Answer a question addressed to you, once."""
+    return remote(api("POST", f"/v1/questions/{uuid(question_id)}/answer", {"text": text}))
+
+@mcp.tool()
+def get_news(peek: bool = False) -> dict[str, Any]:
+    """Read changes since your server-side cursor; peek=true leaves the cursor unchanged."""
+    return remote(api("GET", "/v1/news" + ("?peek=true" if peek else "")))
+
+@mcp.tool()
+def announce_commit(sha: str, subject: str, branch: str | None = None, files: list[str] | None = None) -> dict[str, Any]:
+    """Announce a git commit to the team without running any git command."""
+    return remote(api("POST", "/v1/commits", {"sha": sha, "subject": subject,
+                      **({"branch": branch} if branch is not None else {}), **({"files": files} if files is not None else {})}))
+
+NEWS_KINDS = frozenset(("master_edited", "master_submitted", "master_voted", "master_locked", "task_created",
+                        "task_claimed", "task_done", "task_blocked", "task_accepted", "task_reopened", "task_cancelled",
+                        "task_unblocked", "file_claimed", "file_released", "huddle_started", "huddle_posted",
+                        "huddle_closed", "question_asked", "question_answered", "commit"))
+
 def notify() -> None:
     """Claude Code UserPromptSubmit hook: prints counts only (never remote text), silent on error/empty."""
     try:
         inbox = api("GET", "/v1/inbox", timeout=4)
     except Exception:
-        return
+        inbox = {}
+    if not isinstance(inbox, dict):
+        inbox = {}
     parts = [f"{len(inbox[k])} {label}" for k, label in (
         ("unread_messages", "unread message(s)"), ("assigned_tasks", "task(s) assigned to you"),
-        ("tasks_to_review", "task(s) awaiting your review")) if inbox[k]]
+        ("tasks_to_review", "task(s) awaiting your review")) if isinstance(inbox.get(k), list) and inbox[k]]
     if parts:
         print("AgentMesh: " + ", ".join(parts) + ". Call the agentmesh check_inbox tool when relevant.")
+    try:
+        news = api("GET", "/v1/news?peek=true", timeout=4)
+        count = news.get("unseen_count")
+        if type(count) is not int or count <= 0:
+            return
+        kinds, actors = set(), set()
+        for item in news.get("news", []):
+            if not isinstance(item, dict):
+                continue
+            if isinstance(item.get("kind"), str) and item["kind"] in NEWS_KINDS:
+                kinds.add(item["kind"])
+            if isinstance(item.get("actor"), str) and item["actor"] in ("agent-a", "agent-b"):
+                actors.add(item["actor"])
+        labels = ("; kinds: " + ", ".join(sorted(kinds)) if kinds else "") + ("; actors: " + ", ".join(sorted(actors)) if actors else "")
+        print(f"AgentMesh: {count} news item(s){labels}; call get_news.")
+    except Exception:  # noqa: BLE001 - optional prompt notifications must fail open.
+        return
 
 def main() -> None:
     try:
