@@ -259,9 +259,9 @@ class Handler(BaseHTTPRequestHandler):
         content = json.dumps(data, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
         self._send(content, status, "application/json; charset=utf-8")
 
-    def _dashboard(self):
+    def _dashboard(self, name="dashboard.html"):
         nonce = base64.b64encode(secrets.token_bytes(16)).decode("ascii")
-        html = files("agentmesh_server").joinpath("dashboard.html").read_bytes()
+        html = files("agentmesh_server").joinpath(name).read_bytes()
         html = html.replace(b"__AGENTMESH_NONCE__", nonce.encode("ascii"))
         csp = (f"default-src 'none'; script-src 'nonce-{nonce}'; "
                f"style-src 'nonce-{nonce}' https://fonts.googleapis.com; "
@@ -336,6 +336,9 @@ class Handler(BaseHTTPRequestHandler):
             self.body = self._read_body()
             url = urlsplit(self.path)
             if self.command == "GET" and url.path in ("/", "/index.html"):
+                self._dashboard("signin.html")
+                return
+            if self.command == "GET" and url.path == "/viewer":
                 self._dashboard()
                 return
             if url.path == "/api" or url.path.startswith("/api/"):

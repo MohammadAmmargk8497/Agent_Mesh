@@ -83,6 +83,10 @@ Report only server status and the local health result. Do not request, display o
 4. **Run the printed command.** Ask the user to paste the exact command it printed into their terminal. Do not modify it and do not edit `config.env`.
 5. **Verify.** Ask the user to start a new Claude Code session and type `/mcp`. They should see **agentmesh** connected. Do not call any AgentMesh tool yourself to test it.
 
+## Open the dashboard
+
+Tell the user to open <https://agentmesh.zahid.win> and enter their **access key** (the token from their setup); the **team ID is optional**. The page looks up the team when no ID is supplied and opens `/t/<team-id>#k=<key>`. For a self-hosted team, use the root of that server's HTTPS address instead. The user enters the key only in their browser, never in chat. The old Viewer-key dashboard is now at `/viewer` on the same server.
+
 ## If something fails
 
 Use the troubleshooting table in README.md. Common cases:
@@ -106,4 +110,4 @@ Stop and report the exact error to the user instead of guessing at fixes that ch
 
 The new `agentmesh-mcp` needs Node.js 20+ and exposes `team_sync`, `team_post`, `team_ask`, `team_reply`, `huddle`, `master_prompt`, `plan`, `task`, `claim` and `team_settings`. Old tool names remain under `agentmesh-mcp-legacy`; `agentmesh-notify` and legacy auto-response are unchanged. See README's old→new table. Node.js 22.13+ is required on the Python host; a missing hub runtime leaves `/v1` serving but `/api`, `/t` and `/join` unavailable.
 
-Each hub start reconciles still-active seeded member hashes to the first configured AGENT_A_TOKEN/AGENT_B_TOKEN rotation token; `/v1` continues accepting every configured token. The Viewer token remains legacy-only at `/`. Non-`vc_` seeded tokens cannot produce an upstream `agentmesh dash` link and are not redacted by its token scrubber. Team/member management is CLI/API-only; upstream has no multi-team dashboard or switcher.
+Each hub start reconciles still-active seeded member hashes to the first configured AGENT_A_TOKEN/AGENT_B_TOKEN rotation token; `/v1` continues accepting every configured token. The Viewer token remains legacy-only at `/viewer`. Non-`vc_` seeded tokens cannot produce an upstream `agentmesh dash` link and are not redacted by its token scrubber; use the root sign-in page for their team access. Team/member management is CLI/API-only; upstream has no multi-team dashboard or switcher.

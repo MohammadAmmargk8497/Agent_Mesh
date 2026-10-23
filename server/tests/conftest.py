@@ -2,11 +2,16 @@ from __future__ import annotations
 
 import http.client
 import json
+import sys
 import threading
 import time
 from dataclasses import dataclass
+from pathlib import Path
 
 import pytest
+
+# Test this checkout's package, not whatever an editable install points at.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 
 @dataclass

@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const path = require('node:path');
 const { createHash } = require('node:crypto');
 const { load, context, root } = require('./runtime.cjs');
+const testSignin = require('./signin.cjs');
 const worker = load(path.join(root, 'src/index.ts'));
 const { DoSqlite } = load(path.join(root, 'src/openhuddle/do-sqlite.ts'));
 // Direct-row changes differ from billing writes and exclude trigger side effects.
@@ -52,6 +53,7 @@ const get = (route, token = env.AGENT_A_TOKEN, status = 200) => call('GET', rout
 const post = (route, body, token, status = 200) => call('POST', route, body, token, status);
 async function drain(reader) { let text = ''; while (true) { const r = await reader.read(); if (r.done) return text; text += new TextDecoder().decode(r.value); } }
 (async () => {
+  await testSignin(worker, env);
   let state = await get('/api/state');
   assert.equal(state.team.name, 'default');
   assert.equal(state.me.name, 'agent-a');
