@@ -277,7 +277,7 @@ export class Room extends DurableObject<Env> {
             const task = this.task(id, agent);
             if (task.assignee !== agent) return error("only assignee may claim", 403);
             if (task.status !== "open") return error("task is not open", 409);
-            if (task.waiting_on.length) return error("waiting on dependencies", 409);
+            if (task.waiting_on.length) return json({ error: "waiting on dependencies", waiting_on: task.waiting_on }, 409);
             this.setStatus(id, "in_progress", now);
             this.emit(task.created_by, agent, "task_claimed", id);
             this.coordination.taskNews(agent, "task_claimed", id, now);

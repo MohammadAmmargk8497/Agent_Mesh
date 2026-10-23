@@ -56,6 +56,9 @@ CREATE TABLE IF NOT EXISTS news (
  ref TEXT NOT NULL,summary TEXT NOT NULL,created_at INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS news_seen (agent TEXT PRIMARY KEY,last_id INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS member_settings (
+ agent TEXT PRIMARY KEY,auto_respond INTEGER NOT NULL DEFAULT 1 CHECK(auto_respond IN (0,1))
+);
 """
 
 
@@ -91,6 +94,20 @@ def clean_path(value):
     if not value:
         raise CoordinationError(400, "path must name a file")
     return value
+
+
+def auto_respond_enabled(state, agent):
+    settings = state.rows("SELECT auto_respond FROM member_settings WHERE agent=?", agent)
+    return bool(settings[0]["auto_respond"]) if settings else True
+
+
+def automatic_reply(state, agent, body):
+    automatic = body.get("auto_respond", False)
+    if not isinstance(automatic, bool):
+        raise CoordinationError(400, "auto_respond must be a boolean")
+    if automatic and not auto_respond_enabled(state, agent):
+        raise CoordinationError(409, "auto_respond is disabled for this member")
+    return automatic
 
 
 def migrate(db):
@@ -133,13 +150,23 @@ def changed(state, actor, kind, ref, summary, now, everyone=False):
     return news_id
 
 
+def dependency_tasks(state, dependencies):
+    """Include ancestors so a reopened contract cannot be bypassed via a done task."""
+    pending, found = list(dependencies), {}
+    for task_id in pending:
+        if task_id in found:
+            continue
+        rows = state.rows("SELECT status,depends_on FROM tasks WHERE id=?", task_id)
+        task = rows[0] if rows else None
+        found[task_id] = task
+        if task:
+            pending.extend(json.loads(task.get("depends_on") or "[]"))
+    return found
+
+
 def waiting_on(state, dependencies):
-    unfinished = []
-    for task_id in dependencies:
-        found = state.rows("SELECT status FROM tasks WHERE id=?", task_id)
-        if not found or found[0]["status"] not in ("done", "accepted"):
-            unfinished.append(task_id)
-    return unfinished
+    return [task_id for task_id, task in dependency_tasks(state, dependencies).items()
+            if not task or task["status"] not in ("done", "accepted")]
 
 
 def task_fields(state, row):
@@ -175,7 +202,10 @@ def task_options(state, agent, body):
     contract = body.get("contract", False)
     if not isinstance(contract, bool):
         raise CoordinationError(400, "contract must be a boolean")
-    return owner, areas, dependencies, contract
+    skeleton = body.get("skeleton", False)
+    if not isinstance(skeleton, bool):
+        raise CoordinationError(400, "skeleton must be a boolean")
+    return owner, areas, dependencies, contract or skeleton
 
 
 def save_task_options(state, task_id, options):
@@ -187,13 +217,13 @@ def save_task_options(state, task_id, options):
 def unblocked(state, actor, task_id, now):
     for task in state.rows("SELECT * FROM tasks WHERE status IN ('open','in_progress','blocked')"):
         dependencies = json.loads(task.get("depends_on") or "[]")
-        if task_id in dependencies and not waiting_on(state, dependencies):
+        if task_id in dependency_tasks(state, dependencies) and not waiting_on(state, dependencies):
             owner = task.get("owner") or task["assignee"]
             emit(state, owner, actor, "task_unblocked", task["id"], now)
             news(state, actor, "task_unblocked", task["id"], "Task dependencies satisfied", now)
 
 
-def _new_task(state, agent, item, now, dependencies=None, contract=False, owner=None):
+def _new_task(state, agent, item, now, dependencies=None, contract=None, owner=None):
     if not isinstance(item, dict):
         raise CoordinationError(400, "tasks must contain objects")
     title, description = clean_text(item.get("title"), 200), clean_text(item.get("description"))
@@ -204,7 +234,8 @@ def _new_task(state, agent, item, now, dependencies=None, contract=False, owner=
         raise CoordinationError(400, "acceptance_criteria must contain at most 20 strings")
     criteria = [clean_text(value, 500) for value in criteria]
     body = dict(item, owner=owner if owner is not None else item["assignee"],
-                depends_on=dependencies or [], contract=contract)
+                depends_on=item.get("depends_on", []) if dependencies is None else dependencies,
+                contract=item.get("contract", False) if contract is None else contract)
     options = task_options(state, agent, body)
     task_id = str(uuid.uuid4())
     state.db.execute("INSERT INTO tasks (id,title,description,assignee,created_by,status,acceptance_criteria,result,created_at,updated_at) VALUES (?,?,?,?,?,'open',?,NULL,?,?)",
@@ -247,6 +278,14 @@ def route(handler, state, agent, path, query, now):
     method, db, rows = handler.command, state.db, state.rows
     def param(name):
         return query.get(name, [None])[0]
+
+    if path == "/v1/settings" and method in ("GET", "POST"):
+        if method == "POST":
+            enabled = handler._body_json().get("auto_respond")
+            if not isinstance(enabled, bool):
+                raise CoordinationError(400, "auto_respond must be a boolean")
+            db.execute("INSERT INTO member_settings (agent,auto_respond) VALUES (?,?) ON CONFLICT(agent) DO UPDATE SET auto_respond=excluded.auto_respond", (agent, int(enabled)))
+        return {"agent": agent, "auto_respond": auto_respond_enabled(state, agent)}, 200
 
     if path == "/v1/master" and method == "GET":
         return master(state), 200
@@ -300,9 +339,22 @@ def route(handler, state, agent, path, query, now):
         items = handler._body_json().get("tasks")
         if not isinstance(items, list) or not 1 <= len(items) <= 20:
             raise CoordinationError(400, "tasks must contain 1 to 20 objects")
-        ids = []
+        # Validate before picking the root; an explicitly tagged contract may
+        # appear anywhere in the board, while old boards still use task 1.
+        options = []
+        for item in items:
+            if not isinstance(item, dict):
+                raise CoordinationError(400, "tasks must contain objects")
+            options.append(task_options(state, agent, dict(item, owner=item.get("assignee"))))
+        root = next((index for index, option in enumerate(options) if option[3]), 0)
+        ids = [None] * len(items)
+        ids[root] = _new_task(state, agent, items[root], now, contract=True)
         for index, item in enumerate(items):
-            ids.append(_new_task(state, agent, item, now, ids[:1], index == 0))
+            if index != root:
+                dependencies = list(dict.fromkeys([*options[index][2], ids[root]]))
+                if len(dependencies) > 20:
+                    raise CoordinationError(400, "depends_on must contain at most 20 task ids including the contract")
+                ids[index] = _new_task(state, agent, item, now, dependencies, options[index][3])
         tasks = []
         for task_id in ids:
             task = task_fields(state, rows("SELECT * FROM tasks WHERE id=?", task_id)[0])
@@ -365,7 +417,10 @@ def route(handler, state, agent, path, query, now):
         if action == "posts":
             if body.get("kind") not in ("idea", "back", "push_back"):
                 raise CoordinationError(400, "invalid post kind")
-            text, ref = clean_text(body.get("text")), body.get("ref_post_id")
+            automatic = automatic_reply(state, agent, body)
+            if automatic and rows("SELECT id FROM huddle_posts WHERE huddle_id=? AND author=?", huddle_id, agent):
+                raise CoordinationError(409, "member has already contributed to this huddle")
+            text, ref = clean_text(body.get("text"), 500 if automatic else 8000), body.get("ref_post_id")
             if ref is not None and (not isinstance(ref, str) or not UUID.fullmatch(ref) or not rows("SELECT id FROM huddle_posts WHERE id=? AND huddle_id=?", ref, huddle_id)):
                 raise CoordinationError(400, "ref_post_id must refer to this huddle")
             post_id = str(uuid.uuid4())
@@ -401,7 +456,9 @@ def route(handler, state, agent, path, query, now):
             raise CoordinationError(403, "only the recipient may answer")
         if found[0]["answered_at"] is not None:
             raise CoordinationError(409, "question is already answered")
-        text = clean_text(handler._body_json().get("text"))
+        body = handler._body_json()
+        automatic = automatic_reply(state, agent, body)
+        text = clean_text(body.get("text"), 500 if automatic else 8000)
         db.execute("UPDATE questions SET answer=?,answered_at=? WHERE id=?", (text, now, match[1]))
         changed(state, agent, "question_answered", match[1], "Question answered", now)
         return {"id": match[1], "answered_at": now}, 200

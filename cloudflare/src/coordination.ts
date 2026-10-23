@@ -59,11 +59,22 @@ export class Coordination {
       CREATE TABLE IF NOT EXISTS questions (id TEXT PRIMARY KEY, sender TEXT NOT NULL, recipient TEXT NOT NULL, text TEXT NOT NULL, task_id TEXT, answer TEXT, created_at INTEGER NOT NULL, answered_at INTEGER);
       CREATE TABLE IF NOT EXISTS news (id INTEGER PRIMARY KEY AUTOINCREMENT, actor TEXT NOT NULL, kind TEXT NOT NULL, ref TEXT NOT NULL, summary TEXT NOT NULL, created_at INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS news_seen (agent TEXT PRIMARY KEY, last_id INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS member_settings (agent TEXT PRIMARY KEY, auto_respond INTEGER NOT NULL DEFAULT 1 CHECK(auto_respond IN (0,1)));
       CREATE INDEX IF NOT EXISTS huddle_posts_huddle ON huddle_posts(huddle_id,created_at);
     `);
   }
   private rows(query: string, ...args: any[]): any[] { return this.sql(query, ...args).toArray(); }
   private one(query: string, ...args: any[]): any { return this.rows(query, ...args)[0]; }
+  private autoRespondEnabled(agent: Agent): boolean {
+    const settings = this.one("SELECT auto_respond FROM member_settings WHERE agent=?", agent);
+    return settings ? Boolean(settings.auto_respond) : true;
+  }
+  private automaticReply(body: any, agent: Agent): boolean {
+    if (body.auto_respond !== undefined && typeof body.auto_respond !== "boolean") throw new HttpError(400, "auto_respond must be a boolean");
+    const automatic = body.auto_respond === true;
+    if (automatic && !this.autoRespondEnabled(agent)) throw new HttpError(409, "auto_respond is disabled for this member");
+    return automatic;
+  }
   private state(): any {
     return this.one("SELECT status,revision,locked_version,round,lead FROM master_state WHERE id=1");
   }
@@ -85,11 +96,21 @@ export class Coordination {
       waiting_on: state.status === "voting" ? AGENTS.filter(a => !votes.some(v => v.agent === a && v.decision === "approve")) : [],
       edits: this.rows("SELECT * FROM master_edits ORDER BY revision DESC LIMIT 50").reverse() };
   }
+  private dependencyTasks(dependencies: string[]): Map<string, any> {
+    const pending = [...dependencies], found = new Map<string, any>();
+    for (const id of pending) {
+      if (found.has(id)) continue;
+      const task = this.one("SELECT status,depends_on FROM tasks WHERE id=?", id);
+      found.set(id, task);
+      if (task) pending.push(...JSON.parse(task.depends_on || "[]"));
+    }
+    return found;
+  }
   parseTask(row: any): any {
     const depends_on: string[] = JSON.parse(row.depends_on || "[]");
     return { ...row, acceptance_criteria: JSON.parse(row.acceptance_criteria), owner: row.owner ?? null,
       file_areas: JSON.parse(row.file_areas || "[]"), depends_on, contract: Boolean(row.contract),
-      waiting_on: depends_on.filter(id => !["done", "accepted"].includes(this.one("SELECT status FROM tasks WHERE id=?", id)?.status)) };
+      waiting_on: [...this.dependencyTasks(depends_on)].filter(([, task]) => !["done", "accepted"].includes(task?.status)).map(([id]) => id) };
   }
   private visibleTask(id: string, agent: Agent): any {
     const task = this.one("SELECT * FROM tasks WHERE id=? AND (assignee=? OR created_by=?)", id, agent, agent);
@@ -105,7 +126,8 @@ export class Coordination {
     if (!Array.isArray(depends) || depends.length > 20 || depends.some(v => typeof v !== "string" || !UUID.test(v))) throw new HttpError(400, "depends_on must contain at most 20 UUIDs");
     for (const id of depends) this.visibleTask(id, agent);
     if (body.contract !== undefined && typeof body.contract !== "boolean") throw new HttpError(400, "contract must be a boolean");
-    return { owner, file_areas, depends_on: [...new Set(depends)], contract: body.contract ?? false };
+    if (body.skeleton !== undefined && typeof body.skeleton !== "boolean") throw new HttpError(400, "skeleton must be a boolean");
+    return { owner, file_areas, depends_on: [...new Set(depends)], contract: Boolean(body.contract || body.skeleton) };
   }
   private taskInput(body: any, agent: Agent): any {
     if (!body || typeof body !== "object" || Array.isArray(body)) throw new HttpError(400, "task must be an object");
@@ -113,7 +135,7 @@ export class Coordination {
     if (!AGENTS.includes(body.assignee)) throw new HttpError(400, "assignee must be agent-a or agent-b");
     const criteria = body.acceptance_criteria === undefined ? [] : body.acceptance_criteria;
     if (!Array.isArray(criteria) || criteria.length > 20) throw new HttpError(400, "acceptance_criteria must contain at most 20 strings");
-    return { ...body, title, description, acceptance_criteria: criteria.map(v => cleanText(v, 500)), ...this.taskExtras({ ...body, owner: body.assignee, depends_on: [], contract: false }, agent) };
+    return { ...body, title, description, acceptance_criteria: criteria.map(v => cleanText(v, 500)), ...this.taskExtras({ ...body, owner: body.assignee }, agent) };
   }
   private createTask(body: any, agent: Agent, now: number): any {
     const id = crypto.randomUUID();
@@ -127,7 +149,7 @@ export class Coordination {
   taskUnblocked(id: string, actor: Agent, now: number) {
     for (const raw of this.rows("SELECT * FROM tasks WHERE status IN ('open','in_progress','blocked')")) {
       const task = this.parseTask(raw);
-      if (task.depends_on.includes(id) && !task.waiting_on.length) {
+      if (this.dependencyTasks(task.depends_on).has(id) && !task.waiting_on.length) {
         this.emit(task.owner || task.assignee, actor, "task_unblocked", task.id, true);
         this.news(actor, "task_unblocked", task.id, "Task dependencies satisfied", now);
       }
@@ -154,12 +176,12 @@ export class Coordination {
     this.sql("DELETE FROM questions WHERE answered_at IS NOT NULL AND answered_at<?", now - 30 * DAY);
   }
   async route(request: Request, agent: Agent, path: string, method: string, url: URL, now: number): Promise<Response | undefined> {
-    const known = ["/v1/master", "/v1/master/sections", "/v1/master/submit", "/v1/master/vote", "/v1/tasks/propose", "/v1/claims", "/v1/claims/release", "/v1/huddles", "/v1/questions", "/v1/news", "/v1/commits"].includes(path)
+    const known = ["/v1/settings", "/v1/master", "/v1/master/sections", "/v1/master/submit", "/v1/master/vote", "/v1/tasks/propose", "/v1/claims", "/v1/claims/release", "/v1/huddles", "/v1/questions", "/v1/news", "/v1/commits"].includes(path)
       || /^\/v1\/huddles\/[0-9a-f-]{36}(?:\/(?:posts|close))?$/i.test(path)
       || /^\/v1\/questions\/[0-9a-f-]{36}\/answer$/i.test(path);
     if (!known) return undefined;
     // Finish all asynchronous input and hashing before the atomic SQLite mutation.
-    const mutation = ["/v1/master/sections", "/v1/master/submit", "/v1/master/vote", "/v1/tasks/propose", "/v1/claims", "/v1/claims/release", "/v1/huddles", "/v1/questions", "/v1/commits"].includes(path)
+    const mutation = ["/v1/settings", "/v1/master/sections", "/v1/master/submit", "/v1/master/vote", "/v1/tasks/propose", "/v1/claims", "/v1/claims/release", "/v1/huddles", "/v1/questions", "/v1/commits"].includes(path)
       || /^\/v1\/huddles\/[0-9a-f-]{36}\/(?:posts|close)$/i.test(path)
       || /^\/v1\/questions\/[0-9a-f-]{36}\/answer$/i.test(path);
     const body = method === "POST" && mutation ? await readJson(request) : undefined;
@@ -172,6 +194,13 @@ export class Coordination {
     return this.transact(() => this.handle(body, agent, path, method, url, now, digest));
   }
   private handle(body: any, agent: Agent, path: string, method: string, url: URL, now: number, digest?: string): Response | undefined {
+    if (path === "/v1/settings" && ["GET", "POST"].includes(method)) {
+      if (method === "POST") {
+        if (typeof body.auto_respond !== "boolean") throw new HttpError(400, "auto_respond must be a boolean");
+        this.sql("INSERT INTO member_settings(agent,auto_respond) VALUES (?,?) ON CONFLICT(agent) DO UPDATE SET auto_respond=excluded.auto_respond", agent, Number(body.auto_respond));
+      }
+      return json({ agent, auto_respond: this.autoRespondEnabled(agent) });
+    }
     if (path === "/v1/master" && method === "GET") return json(this.master());
     if (path === "/v1/master/sections" && method === "POST") {
       const state = this.state();
@@ -217,8 +246,15 @@ export class Coordination {
       if (state.status !== "locked") throw new HttpError(409, "master prompt must be locked");
       if (!Array.isArray(body.tasks) || !body.tasks.length || body.tasks.length > 20) throw new HttpError(400, "tasks must contain 1-20 tasks");
       const inputs = body.tasks.map((t: any) => this.taskInput(t, agent));
-      const tasks: any[] = [];
-      for (let i = 0; i < inputs.length; i++) tasks.push(this.createTask({ ...inputs[i], contract: i === 0, depends_on: i ? [tasks[0].id] : [] }, agent, now));
+      const root = Math.max(0, inputs.findIndex((t: any) => t.contract));
+      const tasks: any[] = new Array(inputs.length);
+      tasks[root] = this.createTask({ ...inputs[root], contract: true }, agent, now);
+      for (let i = 0; i < inputs.length; i++) {
+        if (i === root) continue;
+        const depends_on = [...new Set([...inputs[i].depends_on, tasks[root].id])];
+        if (depends_on.length > 20) throw new HttpError(400, "depends_on must contain at most 20 task ids including the contract");
+        tasks[i] = this.createTask({ ...inputs[i], depends_on }, agent, now);
+      }
       return json({ tasks }, 201);
     }
     if (path === "/v1/claims" && method === "GET") {
@@ -267,7 +303,9 @@ export class Coordination {
       if (method === "GET" && !hm[2]) return json({ huddle });
       if (method === "POST" && hm[2] === "posts") {
         if (huddle.status !== "open") throw new HttpError(409, "huddle is closed");
-        const text = cleanText(body.text);
+        const automatic = this.automaticReply(body, agent);
+        if (automatic && huddle.posts.some((p: any) => p.author === agent)) throw new HttpError(409, "member has already contributed to this huddle");
+        const text = cleanText(body.text, automatic ? 500 : 8000);
         if (!["idea", "back", "push_back"].includes(body.kind)) throw new HttpError(400, "invalid post kind");
         const ref_post_id = optionalId(body.ref_post_id);
         if (ref_post_id && !huddle.posts.some((p: any) => p.id === ref_post_id)) throw new HttpError(400, "referenced post is not in this huddle");
@@ -308,7 +346,8 @@ export class Coordination {
       if (!question) throw new HttpError(404, "question not found");
       if (question.recipient !== agent) throw new HttpError(403, "only the recipient may answer");
       if (question.answered_at !== null) throw new HttpError(409, "question already answered");
-      const text = cleanText(body.text);
+      const automatic = this.automaticReply(body, agent);
+      const text = cleanText(body.text, automatic ? 500 : 8000);
       this.sql("UPDATE questions SET answer=?,answered_at=? WHERE id=?", text, now, question.id);
       this.news(agent, "question_answered", question.id, "Question answered", now); this.emit(question.sender, agent, "question_answered", question.id);
       return json({ id: question.id, answered_at: now });

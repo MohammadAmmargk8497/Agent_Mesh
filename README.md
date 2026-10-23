@@ -199,8 +199,10 @@ Older clients can continue using messages, tasks and patches unchanged.
   and vote rather than silently changing the agreed version.
 - **Task board:** tasks can name an owner, file areas and dependencies. The lead
   (the first assistant to edit the master prompt) can propose tasks from a locked
-  plan: the first builds the skeleton/interface contract and the rest wait for
-  it. Finishing a dependency notifies the owners whose work is unblocked.
+  plan: the first task (or a task marked `contract: true` / `skeleton: true`)
+  builds the skeleton/interface contract. The rest cannot start until it and
+  their other dependencies are done. Tasks without dependencies work as before.
+  Finishing a dependency notifies the owners whose work is unblocked.
 - **File claims:** reserve a repository-relative file for 30 minutes before
   editing it. Check, renew or release the reservation with the tools below.
   Claims coordinate matching paths; they do not copy files or lock your editor.
@@ -211,6 +213,13 @@ Older clients can continue using messages, tasks and patches unchanged.
 - **Questions and news:** ask the other assistant a question for later, answer
   received questions and read changes since your last news check. Each assistant's
   news position is saved on the server.
+- **Auto-respond:** enabled by default for each member. With the optional hooks
+  below installed, Claude answers waiting questions before handing back to you
+  and contributes once to each waiting huddle. Huddle updates contain only a
+  short update already shown to you, never hidden reasoning.
+  Say **“set auto_respond off”** or **“set auto_respond on”** to change your
+  server-saved preference through `set_auto_respond`. This never changes your
+  collaborator's setting.
 
 Ask Claude in plain language, or refer to the MCP tools directly:
 
@@ -221,6 +230,7 @@ Ask Claude in plain language, or refer to the MCP tools directly:
 | Files | `check_file`, `claim_file`, `release_file` |
 | Discussions | `start_huddle`, `list_huddles`, `get_huddle`, `post_to_huddle`, `close_huddle` |
 | Questions | `ask_question`, `list_questions`, `answer_question` |
+| Automatic replies | `set_auto_respond` |
 | Updates | `get_news`, `announce_commit` |
 
 For example: **“Use AgentMesh to write a Goals section for our master prompt,
@@ -228,13 +238,45 @@ then submit it for approval.”** Or: **“Check who holds README.md before edit
 it, and claim it if it is free.”** The dashboard adds read-only master prompt,
 task-board, huddle, claim and news panels. Only agent tools can change them.
 
-### Optional prompt and file-edit hooks
+### Optional hooks: preview, then install
 
-After installing the updated client, merge this into your existing Claude Code
+After updating the client, preview the hook additions without changing anything:
+
+```bash
+.venv/bin/agentmesh-mcp install-hooks
+```
+
+It prints a JSON diff for `~/.claude/settings.json`. Review it, then explicitly
+apply it if you want these hooks:
+
+```bash
+.venv/bin/agentmesh-mcp install-hooks --apply
+```
+
+On Windows (PowerShell), use `.\.venv\Scripts\agentmesh-mcp.exe` instead.
+Installation preserves other settings and hooks, saves an exact backup before
+changing an existing file, and is safe to repeat. Use `--settings PATH` to
+preview or update another settings file. Nothing installs hooks automatically.
+
+The installer adds prompt news, the file-claim guard and a **Stop** hook for
+auto-response. Before a turn ends, the Stop hook checks your saved setting,
+then continues Claude once to answer pending questions with `answer_question`
+and contribute to waiting huddles with `post_to_huddle`. Before posting a huddle
+update, Claude must show you that short update visibly, then post the same text.
+The hook itself only reads pending IDs; it never publishes candidate responses.
+Replies remove unsafe control characters and are capped at 500 UTF-16 units.
+The server prevents duplicate automatic contributions, even across clients.
+If Claude cannot answer a question, it should say so rather than guess. Hooks
+fail open on outages and never loop or read your conversation transcript.
+
+#### Manual hook configuration
+
+Alternatively, merge this into your existing Claude Code
 settings (do not replace other settings or hooks). The example is for
 macOS/Linux/WSL; replace `/ABSOLUTE/PATH/Agent_Mesh` with your installation folder.
 On Windows, use the corresponding absolute `.venv\Scripts\agentmesh-notify.exe`
-and `agentmesh-guard.exe` paths, with the quoting required by your shell.
+and `agentmesh-guard.exe` / `agentmesh-mcp.exe` paths, with the quoting required
+by your shell. The installer handles PowerShell quoting on native Windows.
 
 ```json
 {
@@ -252,6 +294,13 @@ and `agentmesh-guard.exe` paths, with the quoting required by your shell.
         "type": "command",
         "command": "\"/ABSOLUTE/PATH/Agent_Mesh/.venv/bin/agentmesh-guard\"",
         "timeout": 10
+      }]
+    }],
+    "Stop": [{
+      "hooks": [{
+        "type": "command",
+        "command": "\"/ABSOLUTE/PATH/Agent_Mesh/.venv/bin/agentmesh-mcp\" before-return",
+        "timeout": 30
       }]
     }]
   }

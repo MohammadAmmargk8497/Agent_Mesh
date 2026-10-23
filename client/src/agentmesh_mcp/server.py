@@ -84,6 +84,21 @@ def whoami() -> dict[str, Any]:
     return api("GET", "/v1/whoami")
 
 @mcp.tool()
+def set_auto_respond(enabled: bool | str) -> dict[str, Any]:
+    """Persist your auto-response preference. 'set auto_respond off' means enabled=false; 'on' means true.
+
+    With the optional Stop hook installed, answer waiting questions before returning to the user,
+    and share only short, already user-visible updates with waiting huddles. Never invent an answer.
+    """
+    if isinstance(enabled, str):
+        if enabled.strip().lower() not in ("on", "off"):
+            raise ValueError("enabled must be a boolean or 'on'/'off'")
+        enabled = enabled.strip().lower() == "on"
+    if type(enabled) is not bool:
+        raise ValueError("enabled must be a boolean or 'on'/'off'")
+    return api("POST", "/v1/settings", {"auto_respond": enabled})
+
+@mcp.tool()
 def check_inbox() -> dict[str, Any]:
     """One-call summary: unread messages, tasks assigned to me (open/in progress), and my tasks awaiting review."""
     return remote(api("GET", "/v1/inbox"))
@@ -228,10 +243,21 @@ def get_huddle(huddle_id: str) -> dict[str, Any]:
     return remote(api("GET", f"/v1/huddles/{uuid(huddle_id)}"))
 
 @mcp.tool()
-def post_to_huddle(huddle_id: str, kind: str, text: str, ref_post_id: str | None = None) -> dict[str, Any]:
-    """Post an idea, back or push_back; optionally reference an existing post."""
+def post_to_huddle(huddle_id: str, kind: str, text: str, ref_post_id: str | None = None,
+                   auto_respond: bool = False) -> dict[str, Any]:
+    """Post an idea, back or push_back; optionally reference an existing post.
+
+    For auto_respond=true, use ONLY text already shown to the user; at most one automatic
+    contribution is allowed per member/huddle, and the reply is cleaned and capped at 500 units.
+    """
+    if auto_respond:
+        from .auto_respond import short_reply
+
+        text = short_reply(text)
     return remote(api("POST", f"/v1/huddles/{uuid(huddle_id)}/posts",
-                      {"kind": kind, "text": text, **({"ref_post_id": uuid(ref_post_id)} if ref_post_id is not None else {})}))
+                      {"kind": kind, "text": text, **({"ref_post_id": uuid(ref_post_id)} if ref_post_id is not None else {}),
+                       **({"auto_respond": True} if auto_respond else {})},
+                      **({"timeout": 4} if auto_respond else {})))
 
 @mcp.tool()
 def close_huddle(huddle_id: str, decision: str, tasks: list[dict[str, Any]] | None = None) -> dict[str, Any]:
@@ -250,9 +276,15 @@ def list_questions(open: bool = False) -> dict[str, Any]:
     return remote(api("GET", "/v1/questions" + ("?open=true" if open else "")))
 
 @mcp.tool()
-def answer_question(question_id: str, text: str) -> dict[str, Any]:
-    """Answer a question addressed to you, once."""
-    return remote(api("POST", f"/v1/questions/{uuid(question_id)}/answer", {"text": text}))
+def answer_question(question_id: str, text: str, auto_respond: bool = False) -> dict[str, Any]:
+    """Answer a question addressed to you, once. Auto replies must be short, factual answers, not guesses."""
+    if auto_respond:
+        from .auto_respond import short_reply
+
+        text = short_reply(text)
+    return remote(api("POST", f"/v1/questions/{uuid(question_id)}/answer",
+                      {"text": text, **({"auto_respond": True} if auto_respond else {})},
+                      **({"timeout": 4} if auto_respond else {})))
 
 @mcp.tool()
 def get_news(peek: bool = False) -> dict[str, Any]:
@@ -301,7 +333,28 @@ def notify() -> None:
     except Exception:  # noqa: BLE001 - optional prompt notifications must fail open.
         return
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
+    args = sys.argv[1:] if argv is None else argv
+    if args[:1] == ["install-hooks"]:
+        from .hooks import install_hooks
+
+        install_hooks(args[1:])
+        return
+    if args == ["notify"]:
+        notify()
+        return
+    if args == ["guard"]:
+        from .hooks import guard
+
+        guard()
+        return
+    if args == ["before-return"]:
+        from .auto_respond import before_return
+
+        before_return()
+        return
+    if args:
+        raise SystemExit("usage: agentmesh-mcp [install-hooks [--apply] [--settings PATH]|notify|guard|before-return]")
     try:
         api("GET", "/v1/whoami")
     except Exception as exc:

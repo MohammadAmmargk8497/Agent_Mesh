@@ -3,13 +3,11 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>AgentMesh · Live transcript</title>
+  <title>AgentMesh · Dashboard</title>
+  <meta name="robots" content="noindex">
   <script nonce="__AGENTMESH_NONCE__">
     (function () { try { const theme = localStorage.getItem("papers-theme"); if (theme === "dark" || theme === "light") document.documentElement.setAttribute("data-theme", theme); } catch {} })();
   </script>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;700&family=Newsreader:ital,wght@0,400;0,500;1,400&display=swap" rel="stylesheet">
   <style nonce="__AGENTMESH_NONCE__">
     :root{
       --bg:#f4f5f0; --panel:#fff; --panel-2:#edf0eb; --line:#cbd2ce;
@@ -32,15 +30,17 @@
     button,input{font:inherit}
     button{cursor:pointer;background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:8px 13px}
     button:hover{border-color:var(--dim)}
-    button:focus-visible,input:focus-visible,summary:focus-visible{outline:2px solid var(--cyan);outline-offset:3px}
-    .shell{max-width:1560px;margin:auto;padding:30px 36px 22px}
-    .masthead{display:flex;align-items:center;justify-content:space-between;gap:20px;border-bottom:1px solid var(--line);padding-bottom:22px}
+    :focus-visible{outline:2px solid var(--cyan);outline-offset:3px}
+    .shell{max-width:1680px;margin:auto;padding:20px}
+    .masthead{display:flex;align-items:center;justify-content:space-between;gap:20px;border-bottom:1px solid var(--line);padding-bottom:16px}
+    .brand{display:flex;align-items:center;gap:14px;min-width:0}
+    .brand-mark{width:42px;height:42px;flex-shrink:0;color:var(--cyan)}
     .eyebrow,.meta,.badge,.count,.panel-label,.footer{font-family:"JetBrains Mono",monospace;font-size:11px}
     .eyebrow{color:var(--cyan);letter-spacing:.15em;text-transform:uppercase}
-    h1{font:400 43px/1.1 Newsreader,serif;letter-spacing:-.04em;margin:8px 0}
+    h1{font:400 32px/1.1 Newsreader,Georgia,serif;letter-spacing:-.04em;margin:4px 0}
     .subtitle{margin:0;color:var(--muted)}
     .actions{display:flex;gap:8px;flex-shrink:0}
-    .connection{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;margin:19px 0;color:var(--muted)}
+    .connection{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;margin:14px 0;color:var(--muted)}
     .status{display:flex;align-items:center;gap:8px}
     .status::before{content:"";height:7px;width:7px;border-radius:50%;background:var(--dim)}
     .status.live::before{background:var(--cyan)}
@@ -48,13 +48,14 @@
     .legend{display:flex;gap:16px}
     .agent-a{color:var(--cyan)}
     .agent-b{color:var(--orange)}
-    .workspace{display:grid;grid-template-columns:minmax(0,1.65fr) minmax(300px,1fr);gap:18px;height:calc(100dvh - 255px);min-height:540px}
+    .workspace{display:grid;grid-template-columns:260px minmax(0,1fr) 300px;gap:18px;align-items:start}
+    .col{display:grid;gap:18px;min-width:0}
     .panel{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden}
     .panel-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:15px 18px;border-bottom:1px solid var(--line-soft)}
-    h2{font:500 21px/1.2 Newsreader,serif;margin:0}
+    h2{font:500 21px/1.2 Newsreader,Georgia,serif;margin:0}
     .panel-label{color:var(--dim);text-transform:uppercase;letter-spacing:.08em}
     .count{color:var(--muted);border:1px solid var(--line);border-radius:20px;padding:1px 8px}
-    .messages{overflow:auto;padding:20px;display:flex;flex-direction:column;gap:17px;flex:1;overscroll-behavior:contain}
+    .messages{overflow:auto;padding:18px;display:flex;flex-direction:column;gap:17px;max-height:520px;overscroll-behavior:contain}
     .message{align-self:flex-start;max-width:88%;min-width:160px;border-left:2px solid var(--cyan);background:var(--panel-2);padding:11px 14px;border-radius:0 9px 9px 0}
     .message.from-b{align-self:flex-end;border-left:0;border-right:2px solid var(--orange);border-radius:9px 0 0 9px}
     .message-heading{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
@@ -62,11 +63,11 @@
     .message p,.description,.result{white-space:pre-wrap;overflow-wrap:anywhere;margin:9px 0}
     .meta{color:var(--dim);overflow-wrap:anywhere}
     .message .meta{font-size:10px}
-    .sidebar{display:grid;grid-template-rows:minmax(0,1.2fr) minmax(0,.8fr) minmax(0,1fr);gap:18px;min-height:0}
     .items{overflow:auto;padding:0 18px;overscroll-behavior:contain}
-    .coordination{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px;margin-top:18px}
-    .coordination .items{max-height:480px}
-    .coordination .description{white-space:pre-wrap;overflow-wrap:anywhere}
+    .col-team .items{max-height:380px}
+    .col-feed{position:sticky;top:18px;max-height:calc(100dvh - 36px);overflow:auto;overscroll-behavior:contain;grid-auto-rows:max-content}
+    .panel-feed .items{max-height:calc(100dvh - 240px);min-height:180px}
+    .panel-patches .items,.panel-audit .items{max-height:280px}
     .item{border-bottom:1px solid var(--line-soft);padding:14px 0;overflow-wrap:anywhere}
     .item:last-child{border-bottom:0}
     .item-heading{display:flex;justify-content:space-between;align-items:baseline;gap:12px}
@@ -74,6 +75,65 @@
     .badge{border:1px solid var(--line);border-radius:4px;color:var(--muted);padding:1px 5px;white-space:nowrap;font-size:10px}
     .badge.active{color:var(--cyan)}
     .badge.blocked{color:var(--orange)}
+    .badge.complete{color:var(--violet)}
+    .hint{font-size:12px;color:var(--muted);margin:8px 0;overflow-wrap:anywhere}
+    .asks{padding:14px 18px;margin:0 0 18px;border:1px solid var(--orange);border-radius:12px;background:var(--panel)}
+    .asks h2{font-size:20px}
+    .asks ul{padding-left:20px;margin:8px 0}
+    .asks li{font-size:13px;overflow-wrap:anywhere}
+    .members{list-style:none;padding:0 18px;margin:0}
+    .member{display:flex;gap:12px;padding:16px 0;border-bottom:1px solid var(--line-soft);min-width:0}
+    .member:last-child{border:0}
+    .avatar{display:grid;place-items:center;width:32px;height:32px;border:1px solid currentColor;border-radius:50%;flex-shrink:0;font-family:"JetBrains Mono",monospace}
+    .member-main{min-width:0;color:var(--text)}
+    .member-main p{margin:5px 0;font-size:12px;overflow-wrap:anywhere}
+    .rules{margin:0;padding:0 18px}
+    .rule{padding:12px 0;border-bottom:1px solid var(--line-soft)}
+    .rule:last-child{border:0}
+    .rule dt{font:11px "JetBrains Mono",monospace;color:var(--dim);margin-bottom:4px}
+    .rule dd{margin:0;font-size:12px;overflow-wrap:anywhere}
+    .panel-board{container-type:inline-size}
+    .board{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;padding:16px}
+    .board-column{background:var(--panel-2);border-radius:8px;padding:10px;min-width:0}
+    .column-heading{display:flex;justify-content:space-between;align-items:center;gap:6px;margin:0 0 12px;font-size:12px}
+    .task-card{border:1px solid var(--line);border-left:3px solid var(--cyan);border-radius:8px;background:var(--panel);padding:12px;margin-bottom:10px;overflow-wrap:anywhere}
+    .task-card:last-child{margin-bottom:0}
+    .task-card.from-b{border-left-color:var(--orange)}
+    .task-card.is-done{border-left-color:var(--violet)}
+    .task-card .item-heading{align-items:flex-start;flex-wrap:wrap;gap:6px}
+    .task-card .item-title{margin:9px 0}
+    .flag{font-size:10px;color:var(--cyan)}
+    .flag.wait{color:var(--orange)}
+    .board-empty{grid-column:1/-1}
+    .huddle{padding:16px 0;border-bottom:1px solid var(--line-soft);overflow-wrap:anywhere}
+    .huddle:last-child{border:0}
+    .huddle .item-title{font-size:15px;margin:9px 0}
+    .huddle-wait{font-size:12px;color:var(--orange);margin:10px 0}
+    .huddle-wait.complete{color:var(--cyan)}
+    .ideas,.talk{list-style:none;padding:0;margin:12px 0}
+    .idea,.talk-item{padding:10px 12px;margin:8px 0;background:var(--panel-2);border-radius:7px;border-left:2px solid var(--line)}
+    .talk-item.back{border-color:var(--cyan)}
+    .talk-item.push-back{border-color:var(--orange)}
+    .idea-top{display:flex;align-items:baseline;flex-wrap:wrap;gap:8px}
+    .idea p,.talk-item p{margin:6px 0;font-size:12px;white-space:pre-wrap;overflow-wrap:anywhere}
+    .score{display:flex;gap:10px;font:10px "JetBrains Mono",monospace}
+    .backing{color:var(--cyan)}
+    .pushback{color:var(--orange)}
+    .huddle-controls{display:flex;justify-content:space-between;align-items:center;gap:10px;margin:14px 0}
+    .huddle-controls button,.huddle button{font-size:12px;padding:6px 10px}
+    .decision{border-left:2px solid var(--violet);padding:4px 12px;margin:12px 0}
+    .decision h4{margin:0;font-size:12px;color:var(--violet)}
+    .prompt-bar{padding:14px 18px;background:var(--panel-2);border-bottom:1px solid var(--line-soft)}
+    .prompt-bar .item-title{font-size:12px}
+    .votes{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+    .vote{border:1px solid var(--line);border-radius:7px;padding:6px 9px;font-size:11px;max-width:100%;overflow-wrap:anywhere}
+    .vote p{margin:4px 0;white-space:pre-wrap}
+    .sections{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 22px;padding:0 18px}
+    .prompt-section{min-width:0;border-bottom:1px solid var(--line-soft);padding:16px 0}
+    .prompt-history{grid-column:1/-1;padding:12px 0}
+    .feed-entry{border-bottom:1px solid var(--line-soft);padding:12px 0;overflow-wrap:anywhere}
+    .feed-entry:last-child{border:0}
+    .feed-entry p{font-size:12px;margin:6px 0;white-space:pre-wrap}
     details{margin-top:8px}
     summary{cursor:pointer;color:var(--muted);font-size:12px}
     .details-body{font-size:12px}
@@ -88,37 +148,44 @@
     .auth button{width:100%;margin-top:14px;background:var(--text);color:var(--bg);border-color:var(--text)}
     .auth .auth-error{color:var(--orange);font-size:12px}
     .footer{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;color:var(--dim);margin-top:17px;font-size:10px}
-    @media(max-width:850px){
-      .shell{padding:22px 16px}
-      .masthead{align-items:flex-start}
-      h1{font-size:36px}
+    @container(max-width:860px){.board{grid-template-columns:repeat(2,minmax(0,1fr))}}
+    @container(max-width:460px){.board{grid-template-columns:1fr}}
+    @media(max-width:1280px){
+      .workspace{grid-template-columns:280px minmax(0,1fr)}
+      .col-feed{position:static;max-height:none;overflow:visible;grid-column:1/-1;grid-template-columns:repeat(2,minmax(0,1fr))}
+      .panel-feed{grid-column:1/-1}
+      .panel-feed .items{max-height:400px}
+    }
+    @media(max-width:900px){.sections{grid-template-columns:1fr}}
+    @media(max-width:760px){
+      .shell{padding:16px}
+      .workspace{grid-template-columns:1fr;gap:16px}
+      .col{display:contents}
+      .panel-team{order:1}.panel-board{order:2}.panel-huddles{order:3}.panel-questions{order:4}
+      .panel-feed{order:5}.panel-prompt{order:6}.panel-messages{order:7}.panel-claims{order:8}
+      .panel-rules{order:9}.panel-patches{order:10}.panel-audit{order:11}
+      .panel-feed{grid-column:auto}
+      .messages{max-height:60dvh;padding:14px}
+      .message{max-width:94%;min-width:0;flex-shrink:0}
       .subtitle{font-size:12px}
-      .actions{flex-direction:column}
-      .workspace{height:auto;min-height:0;grid-template-columns:1fr}
-      .coordination{grid-template-columns:1fr}
-      .messages{height:60dvh;min-height:300px;flex:auto;padding:14px}
-      .sidebar{grid-template-rows:auto auto auto}
-      .items{max-height:55dvh}
-      .message{max-width:94%}
       .auth{margin:40px auto;padding:24px}
     }
     @media(max-width:480px){
       .shell{padding:18px 12px}
       .masthead{flex-direction:column;align-items:stretch;gap:14px}
-      h1{font-size:32px}
+      h1{font-size:28px}
       .actions{flex-direction:row;flex-wrap:wrap}
       .actions button{flex:1}
       .connection{flex-direction:column;align-items:flex-start;gap:8px}
       .panel-heading{padding:13px 14px}
       .panel-heading>div{min-width:0;overflow-wrap:anywhere}
-      .messages{height:55dvh;min-height:260px;padding:12px}
-      .message{max-width:90%;min-width:0;flex-shrink:0;overflow-wrap:anywhere}
-      .items{height:280px;max-height:50dvh;padding:0 14px}
+      .messages{max-height:55dvh;padding:12px}
+      .items{padding:0 14px}
       .item-heading{flex-wrap:wrap}
       .auth{padding:20px}
     }
     @media(pointer:coarse){
-      .actions button,.auth input,.auth button{min-height:44px}
+      button,.auth input,summary{min-height:44px}
     }
     @media(prefers-reduced-motion:no-preference){button{transition:border-color .15s ease}}
   </style>
@@ -126,10 +193,11 @@
 <body>
   <div class="shell">
     <header class="masthead">
-      <div>
-        <div class="eyebrow">AgentMesh / Observability</div>
+      <div class="brand">
+        <svg class="brand-mark" viewBox="0 0 48 48" fill="none" aria-hidden="true"><path d="M12 12 36 24 12 36Z" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="12" r="5" fill="currentColor"/><circle cx="36" cy="24" r="5" fill="currentColor"/><circle cx="12" cy="36" r="5" fill="currentColor"/></svg>
+        <div><div class="eyebrow">AgentMesh / Shared workspace</div>
         <h1>A conversation in motion.</h1>
-        <p class="subtitle">Two agents. One shared workspace. A read-only view.</p>
+        <p class="subtitle">Two agents. One shared workspace. A read-only view.</p></div>
       </div>
       <div class="actions">
         <button id="theme-toggle" type="button">Dark theme</button>
@@ -152,44 +220,62 @@
         <button type="submit">Open live transcript</button>
       </form>
     </section>
+    <section id="asks" class="asks" aria-labelledby="asks-title" hidden>
+      <h2 id="asks-title">Waiting on the team</h2><ul id="asks-list"></ul>
+      <p class="hint">Your agents handle questions, ideas and votes from their own sessions. This dashboard is read-only.</p>
+    </section>
     <main id="workspace" class="workspace" hidden>
-      <section class="panel" aria-labelledby="messages-title">
-        <div class="panel-heading"><div><div class="panel-label">The conversation</div><h2 id="messages-title">Live transcript</h2></div><span id="message-count" class="count">0</span></div>
-        <div id="messages" class="messages" tabindex="0" aria-label="Agent message timeline"></div>
-      </section>
-      <aside class="sidebar" aria-label="Shared work">
-        <section class="panel" aria-labelledby="tasks-title">
-          <div class="panel-heading"><div><div class="panel-label">Owners · dependencies · contracts</div><h2 id="tasks-title">Task board</h2></div><span id="task-count" class="count">0</span></div>
-          <div id="tasks" class="items" tabindex="0" aria-label="Task list"></div>
+      <aside class="col col-team" aria-label="Team and coordination">
+        <section class="panel panel-team" aria-labelledby="team-title">
+          <div class="panel-heading"><h2 id="team-title">Team status</h2><span id="team-count" class="count">2 agents</span></div>
+          <ul id="members" class="members"></ul>
         </section>
-        <section class="panel" aria-labelledby="patches-title">
-          <div class="panel-heading"><div><div class="panel-label">Shared changes · metadata only</div><h2 id="patches-title">Patches</h2></div><span id="patch-count" class="count">0</span></div>
+        <section class="panel panel-rules" aria-labelledby="rules-title">
+          <div class="panel-heading"><h2 id="rules-title">Coordination guide</h2></div><dl id="rules" class="rules"></dl>
+        </section>
+        <section class="panel panel-claims" aria-labelledby="claims-title">
+          <div class="panel-heading"><div><div class="panel-label">30-minute reservations</div><h2 id="claims-title">File claims</h2></div><span id="claim-count" class="count">0</span></div>
+          <div id="claims" class="items" tabindex="0" aria-label="Active file claims"></div>
+        </section>
+        <section class="panel panel-questions" aria-labelledby="questions-title">
+          <div class="panel-heading"><h2 id="questions-title">Questions</h2><span id="question-count" class="count">0</span></div>
+          <div id="questions" class="items" tabindex="0" aria-label="Questions and answers"></div>
+        </section>
+      </aside>
+      <div id="coordination" class="col col-work" aria-label="Project coordination" hidden>
+        <section class="panel panel-board" aria-labelledby="tasks-title">
+          <div class="panel-heading"><div><div class="panel-label">Owners · dependencies · contracts</div><h2 id="tasks-title">Task board</h2></div><span id="task-count" class="count">0</span></div>
+          <div id="tasks" class="board" aria-label="Task board"></div>
+        </section>
+        <section class="panel panel-huddles" aria-labelledby="huddles-title">
+          <div class="panel-heading"><div><div class="panel-label">Ideas · feedback · decisions</div><h2 id="huddles-title">Huddles</h2></div><span id="huddle-count" class="count">0</span></div>
+          <div id="huddles" class="items"><div id="huddle-list"></div><div id="huddle-view" hidden></div></div>
+        </section>
+        <section class="panel panel-prompt" aria-labelledby="master-title">
+          <div class="panel-heading"><div><div class="panel-label">Shared project description</div><h2 id="master-title">Master prompt</h2></div><span id="prompt-badge" class="badge">Draft</span></div>
+          <div id="master"><div class="empty">No shared project description yet.</div></div>
+          <div class="panel-heading"><span class="meta">Sections · revision history · votes</span><span id="master-count" class="count">0</span></div>
+        </section>
+        <section class="panel panel-messages" aria-labelledby="messages-title">
+          <div class="panel-heading"><div><div class="panel-label">The conversation</div><h2 id="messages-title">Live transcript</h2></div><span id="message-count" class="count">0</span></div>
+          <div id="messages" class="messages" tabindex="0" aria-label="Agent message timeline"></div>
+        </section>
+      </div>
+      <aside class="col col-feed" aria-label="Live activity">
+        <section class="panel panel-feed" aria-labelledby="news-title">
+          <div class="panel-heading"><div><div class="panel-label">Team news · newest first</div><h2 id="news-title">Live feed</h2></div><span id="news-count" class="count">0</span></div>
+          <div id="news" class="items" tabindex="0" aria-label="Live team news feed"></div>
+        </section>
+        <section class="panel panel-patches" aria-labelledby="patches-title">
+          <div class="panel-heading"><div><div class="panel-label">Metadata only</div><h2 id="patches-title">Patches</h2></div><span id="patch-count" class="count">0</span></div>
           <div id="patches" class="items" tabindex="0" aria-label="Patch metadata list"></div>
         </section>
-        <section class="panel" aria-labelledby="audit-title">
-          <div class="panel-heading"><div><div class="panel-label">Actions · latest 200 · 7-day retention</div><h2 id="audit-title">Message activity</h2></div><span id="audit-count" class="count">0</span></div>
+        <section class="panel panel-audit" aria-labelledby="audit-title">
+          <div class="panel-heading"><div><div class="panel-label">Latest 200 · 7-day retention</div><h2 id="audit-title">Message activity</h2></div><span id="audit-count" class="count">0</span></div>
           <div id="audit" class="items" tabindex="0" aria-label="Message action history"></div>
         </section>
       </aside>
     </main>
-    <section id="coordination" class="coordination" aria-label="Project coordination" hidden>
-      <section class="panel" aria-labelledby="master-title">
-        <div class="panel-heading"><div><div class="panel-label">Shared project description · read-only</div><h2 id="master-title">Master prompt</h2></div><span id="master-count" class="count">0</span></div>
-        <div id="master" class="items" tabindex="0" aria-label="Master prompt sections and votes"></div>
-      </section>
-      <section class="panel" aria-labelledby="huddles-title">
-        <div class="panel-heading"><div><div class="panel-label">Ideas · feedback · decisions</div><h2 id="huddles-title">Huddles</h2></div><span id="huddle-count" class="count">0</span></div>
-        <div id="huddles" class="items" tabindex="0" aria-label="Huddle posts and decisions"></div>
-      </section>
-      <section class="panel" aria-labelledby="claims-title">
-        <div class="panel-heading"><div><div class="panel-label">Active 30-minute reservations</div><h2 id="claims-title">File claims</h2></div><span id="claim-count" class="count">0</span></div>
-        <div id="claims" class="items" tabindex="0" aria-label="Active file claims"></div>
-      </section>
-      <section class="panel" aria-labelledby="news-title">
-        <div class="panel-heading"><div><div class="panel-label">Latest 200 · 30-day retention</div><h2 id="news-title">Team news</h2></div><span id="news-count" class="count">0</span></div>
-        <div id="news" class="items" tabindex="0" aria-label="Team news feed"></div>
-      </section>
-    </section>
     <footer class="footer"><span>Read-only · Full snapshots every 4 seconds</span><span>Latest 500 messages / 200 tasks / 50 patches · retention applies</span></footer>
   </div>
   <script nonce="__AGENTMESH_NONCE__">
@@ -218,7 +304,40 @@
       };
       const empty = (container, text) => container.append(element("p", "empty", text));
       let key = "", lastEventId = 0, session = 0, timer = null, controller = null;
-      let rendered = {};
+      let rendered = {}, snapshot = null, selectedHuddle = null;
+      const agents = ["agent-a", "agent-b"];
+      const shortId = (value) => String(value || "—").slice(0, 8);
+      const words = (value) => String(value || "").replaceAll("_", " ");
+      const excerpt = (value, max = 140) => {
+        const text = String(value || "").replace(/\s+/g, " ").trim();
+        return text.length > max ? text.slice(0, max - 1) + "…" : text;
+      };
+      const ago = (value) => {
+        if (value === null || value === undefined) return "not recorded";
+        const seconds = Math.max(0, Math.floor((Date.now() - new Date(value).getTime()) / 1000));
+        if (!Number.isFinite(seconds)) return "not recorded";
+        if (seconds < 60) return "just now";
+        if (seconds < 3600) return Math.floor(seconds / 60) + "m ago";
+        if (seconds < 86400) return Math.floor(seconds / 3600) + "h ago";
+        return Math.floor(seconds / 86400) + "d ago";
+      };
+      const taskRef = (id) => {
+        const task = snapshot && snapshot.tasks.find((row) => row.id === id);
+        return shortId(id) + (task ? " · " + task.title : "");
+      };
+      // Keep disclosure, keyboard focus and scroll position through live snapshots.
+      function preserveView(id, render) {
+        const root = get(id), top = root.scrollTop;
+        const opened = new Set(Array.from(root.querySelectorAll("details[open]")).map((node) => node.dataset.id));
+        const active = root.contains(document.activeElement) ? document.activeElement.dataset.focus : null;
+        render();
+        for (const node of root.querySelectorAll("details")) node.open = opened.has(node.dataset.id);
+        root.scrollTop = top;
+        if (active) {
+          const target = Array.from(root.querySelectorAll("[data-focus]")).find((node) => node.dataset.focus === active);
+          if (target) target.focus({ preventScroll: true });
+        }
+      }
 
       function updateThemeButton() {
         const dark = document.documentElement.getAttribute("data-theme") === "dark";
@@ -242,6 +361,8 @@
         key = "";
         lastEventId = 0;
         rendered = {};
+        snapshot = null;
+        selectedHuddle = null;
       }
       function showAuth(message = "", focus = false) {
         stopSession();
@@ -249,14 +370,18 @@
         get("viewer-key").value = "";
         get("workspace").hidden = true;
         get("coordination").hidden = true;
+        get("asks").hidden = true;
         get("sign-out").hidden = true;
         get("auth").hidden = false;
         get("auth-error").textContent = message;
         get("auth-error").hidden = !message;
         get("last-updated").textContent = "—";
         get("last-updated").removeAttribute("datetime");
-        for (const id of ["messages", "tasks", "patches", "audit", "master", "huddles", "claims", "news"]) get(id).replaceChildren();
-        for (const id of ["message-count", "task-count", "patch-count", "audit-count", "master-count", "huddle-count", "claim-count", "news-count"]) get(id).textContent = "0";
+        for (const id of ["messages", "tasks", "patches", "audit", "master", "huddle-list", "huddle-view", "claims", "questions", "news", "members", "rules", "asks-list"]) get(id).replaceChildren();
+        get("huddle-list").hidden = false;
+        get("huddle-view").hidden = true;
+        get("prompt-badge").textContent = "Draft";
+        for (const id of ["message-count", "task-count", "patch-count", "audit-count", "master-count", "huddle-count", "claim-count", "question-count", "news-count"]) get(id).textContent = "0";
         setStatus(message ? "Access denied · enter a viewer key" : "Viewer key required", message ? "warning" : "");
         if (focus) get("viewer-key").focus();
       }
@@ -284,24 +409,42 @@
       }
       function renderTasks(rows) {
         const container = get("tasks");
-        const open = new Set(Array.from(container.querySelectorAll("details[open]")).map((node) => node.dataset.id));
         const fragment = document.createDocumentFragment();
-        for (const row of rows) {
-          const card = element("article", "item");
+        const completed = rows.filter((row) => ["done", "accepted"].includes(row.status)).length;
+        const columns = [
+          ["Proposed / open", (row) => !["in_progress", "blocked", "done", "accepted", "cancelled"].includes(row.status)],
+          ["In progress", (row) => row.status === "in_progress"],
+          ["Blocked", (row) => row.status === "blocked"],
+          ["Done / closed", (row) => ["done", "accepted", "cancelled"].includes(row.status)]
+        ];
+        for (const [label, matches] of columns) {
+          const column = element("section", "board-column");
+          const items = rows.filter(matches);
+          const title = element("h3", "column-heading", label);
+          title.append(element("span", "count", items.length));
+          column.append(title);
+          for (const row of items) {
+          const done = ["done", "accepted", "cancelled"].includes(row.status);
+          const card = element("article", "task-card" + (row.assignee === "agent-b" ? " from-b" : "") + (done ? " is-done" : ""));
           const heading = element("div", "item-heading");
           const state = row.status === "blocked" ? " blocked" : ["open", "in_progress"].includes(row.status) ? " active" : "";
-          heading.append(element("h3", "item-title", row.title), element("span", "badge" + state, row.status));
-          card.append(heading, element("div", "meta " + agentClass(row.assignee), row.created_by + " → " + row.assignee));
-          card.append(element("div", "meta", "Owner: " + (row.owner || "—") + (row.contract ? " · Contract / skeleton" : "")));
-          if (row.waiting_on && row.waiting_on.length) card.append(element("div", "meta", "Waiting on: " + row.waiting_on.join(", ")));
+          heading.append(element("span", "meta", shortId(row.id)), element("span", "badge" + state, words(row.status)));
+          card.append(heading, element("h4", "item-title", row.title), element("div", "meta " + agentClass(row.assignee), row.created_by + " → " + row.assignee));
+          card.append(element("div", "meta", "Owner: " + (row.owner || row.assignee || "—")));
+          if (row.contract) card.append(element("span", "badge active", "Contract / skeleton"));
+          if (!done) {
+            const waiting = row.waiting_on || [];
+            card.append(element("p", "flag" + (waiting.length || row.status === "blocked" ? " wait" : ""), waiting.length ? "Waiting on: " + waiting.map(taskRef).join(", ") : row.status === "blocked" ? "Blocked" : "Ready"));
+          }
           const details = element("details");
           details.dataset.id = String(row.id);
-          details.open = open.has(String(row.id));
-          details.append(element("summary", "", "Task details"));
+          const summary = element("summary", "", "Task details");
+          summary.dataset.focus = "task:" + row.id;
+          details.append(summary);
           const body = element("div", "details-body");
           body.append(element("p", "description", row.description));
           if (row.file_areas && row.file_areas.length) body.append(element("div", "meta", "File areas: " + row.file_areas.join(", ")));
-          if (row.depends_on && row.depends_on.length) body.append(element("div", "meta", "Depends on: " + row.depends_on.join(", ")));
+          if (row.depends_on && row.depends_on.length) body.append(element("div", "meta", "Depends on: " + row.depends_on.map(taskRef).join(", ")));
           if (Array.isArray(row.acceptance_criteria) && row.acceptance_criteria.length) {
             body.append(element("h3", "", "Acceptance criteria"));
             const list = element("ul");
@@ -312,11 +455,14 @@
           body.append(element("div", "meta", "Task " + row.id), element("div", "meta", "Created " + timestamp(row.created_at)), element("div", "meta", "Updated " + timestamp(row.updated_at)));
           details.append(body);
           card.append(details);
-          fragment.append(card);
+          column.append(card);
+          }
+          if (!items.length) empty(column, "Nothing here");
+          fragment.append(column);
         }
         container.replaceChildren(fragment);
-        if (!rows.length) empty(container, "No shared tasks yet.");
-        get("task-count").textContent = String(rows.length);
+        if (!rows.length) container.prepend(element("p", "empty board-empty", "No tasks yet. Your agents can turn the master prompt into a plan, with the contract / skeleton first."));
+        get("task-count").textContent = completed + " of " + rows.length + " done";
       }
       function renderPatches(rows) {
         const container = get("patches");
@@ -354,41 +500,158 @@
         const container = get("master");
         const fragment = document.createDocumentFragment();
         const state = master.state || {};
-        const status = element("article", "item");
-        status.append(element("h3", "item-title", (state.status || "draft") + " · revision " + (state.revision || 0) + " · locked v" + (state.locked_version || 0)));
-        status.append(element("div", "meta", "Lead: " + (state.lead || "—") + " · voting round " + (state.round || 0)));
+        const badge = get("prompt-badge");
+        badge.textContent = words(state.status || "draft") + " · v" + (state.status === "locked" ? state.locked_version || 0 : state.revision || 0);
+        badge.className = "badge" + (state.status === "locked" ? " active" : state.status === "voting" ? " blocked" : "");
+        const status = element("div", "prompt-bar");
+        const guidance = state.status === "locked" ? "Approved by both agents. The lead can turn this into the task plan."
+          : state.status === "voting" ? "Both agents must approve this revision. Votes are submitted from their own sessions."
+          : "A shared project description, written by your agents. Once it reads right, they can submit it for approval.";
+        status.append(element("p", "hint", guidance));
+        status.append(element("div", "meta", "Revision " + (state.revision || 0) + " · locked v" + (state.locked_version || 0) + " · round " + (state.round || 0)));
+        status.append(element("div", "meta", "Lead: " + (state.lead || "Nobody yet")));
         if (master.waiting_on && master.waiting_on.length) status.append(element("div", "meta", "Waiting on: " + master.waiting_on.join(", ")));
-        for (const vote of master.votes || []) status.append(element("div", "meta", vote.agent + ": " + vote.decision));
-        fragment.append(status);
-        for (const row of master.sections || []) {
-          const card = element("article", "item");
-          card.append(element("h3", "item-title", row.section), element("p", "description", row.text));
-          card.append(element("div", "meta", row.author + " · revision " + row.revision));
-          card.append(element("div", "meta", "SHA-256: " + row.sha256));
-          fragment.append(card);
+        const votes = element("div", "votes");
+        for (const agent of agents) {
+          const vote = (master.votes || []).find((row) => row.agent === agent);
+          const box = element("div", "vote");
+          box.append(element("span", agentClass(agent), agent + ": " + (vote ? vote.decision : "not voted")));
+          if (vote && vote.note) box.append(element("p", "", vote.note));
+          votes.append(box);
         }
+        status.append(votes);
+        fragment.append(status);
+        const sections = element("div", "sections");
+        for (const row of master.sections || []) {
+          const card = element("article", "prompt-section");
+          card.append(element("h3", "item-title", row.section), element("p", "description", row.text));
+          card.append(element("div", "meta " + agentClass(row.author), row.author + " · revision " + row.revision + " · " + timestamp(row.created_at)));
+          card.append(element("div", "meta", "SHA-256: " + row.sha256));
+          sections.append(card);
+        }
+        if ((master.edits || []).length) {
+          const history = element("details", "prompt-history");
+          history.dataset.id = "master-history";
+          const summary = element("summary", "", "Revision history (" + master.edits.length + ")");
+          summary.dataset.focus = "master-history";
+          history.append(summary);
+          for (const edit of [...master.edits].reverse()) {
+            const entry = element("article", "item");
+            entry.append(element("h4", "item-title", edit.section + " · revision " + edit.revision));
+            entry.append(element("div", "meta", edit.author + " · " + timestamp(edit.created_at)), element("p", "description", edit.text));
+            history.append(entry);
+          }
+          sections.append(history);
+        }
+        fragment.append(sections);
         container.replaceChildren(fragment);
         if (!(master.sections || []).length) empty(container, "No shared project description yet.");
         get("master-count").textContent = String((master.sections || []).length);
       }
-      function renderHuddles(rows) {
-        const container = get("huddles");
-        const fragment = document.createDocumentFragment();
-        for (const row of rows) {
-          const card = element("article", "item");
-          card.append(element("h3", "item-title", row.topic));
-          card.append(element("div", "meta", row.kind + " · " + row.status + " · owner " + row.owner));
-          if (row.waiting_on && row.waiting_on.length) card.append(element("div", "meta", "Waiting on: " + row.waiting_on.join(", ")));
-          for (const post of row.posts || []) {
-            card.append(element("div", "meta", post.author + " · " + post.kind + (post.ref_post_id ? " · re: " + post.ref_post_id : "")));
-            card.append(element("p", "description", post.text));
-          }
-          if (row.decision) card.append(element("h4", "item-title", "Decision"), element("p", "description", row.decision));
-          fragment.append(card);
+      function huddleCard(row, full = false) {
+        const card = element("article", "huddle");
+        const heading = element("div", "item-heading");
+        heading.append(element("span", "meta", shortId(row.id) + " · " + words(row.kind)), element("span", "badge" + (row.status === "open" ? " active" : ""), row.status));
+        card.append(heading, element("h3", "item-title", row.topic));
+        card.append(element("div", "meta " + agentClass(row.owner), "Started by " + row.owner + " · " + timestamp(row.created_at)));
+        const posts = row.posts || [];
+        const ideaPosts = posts.filter((post) => post.kind === "idea");
+        const ideaNumbers = new Map(ideaPosts.map((post, index) => [post.id, index + 1]));
+        if (row.status === "open") {
+          const waiting = row.waiting_on || [];
+          card.append(element("p", "huddle-wait" + (waiting.length ? "" : " complete"), waiting.length ? "Waiting on: " + waiting.join(", ") : "Everyone has weighed in. The owner can close this with a decision."));
         }
-        container.replaceChildren(fragment);
-        if (!rows.length) empty(container, "No huddles yet.");
-        get("huddle-count").textContent = String(rows.length);
+        const ideas = element("ol", "ideas");
+        for (const post of ideaPosts) {
+          const item = element("li", "idea");
+          const top = element("div", "idea-top");
+          top.append(element("span", "meta", "#" + ideaNumbers.get(post.id)), element("span", "meta " + agentClass(post.author), post.author));
+          const replies = posts.filter((reply) => reply.ref_post_id === post.id);
+          const backing = replies.filter((reply) => reply.kind === "back");
+          const pushback = replies.filter((reply) => reply.kind === "push_back");
+          const score = element("span", "score");
+          const up = element("span", "backing", "Back it +" + backing.length);
+          up.title = backing.length ? backing.map((reply) => reply.author + ": " + reply.text).join("\n") : "No backing yet";
+          const down = element("span", "pushback", "Push back −" + pushback.length);
+          down.title = pushback.length ? pushback.map((reply) => reply.author + ": " + reply.text).join("\n") : "No pushback yet";
+          score.append(up, down);
+          top.append(score);
+          item.append(top, element("p", "", post.text));
+          ideas.append(item);
+        }
+        card.append(ideas);
+        if (!ideas.childElementCount && row.status === "open") card.append(element("p", "hint", row.kind === "standup" ? "Updates appear in the discussion." : "No ideas yet."));
+        if (row.status !== "open") {
+          const decision = element("div", "decision");
+          decision.append(element("h4", "", "Decision"), element("p", "description", row.decision || "No decision recorded."), element("div", "meta", "Closed by " + row.owner + " · " + timestamp(row.closed_at)));
+          card.append(decision);
+        }
+        if (full) {
+          const discussion = element("details");
+          discussion.dataset.id = "discussion:" + row.id;
+          const summary = element("summary", "", "Show discussion (" + posts.length + " posts)");
+          summary.dataset.focus = "discussion:" + row.id;
+          discussion.append(summary);
+          const talk = element("ol", "talk");
+          for (const [index, post] of posts.entries()) {
+            const item = element("li", "talk-item" + (post.kind === "back" ? " back" : post.kind === "push_back" ? " push-back" : ""));
+            const top = element("div", "idea-top");
+            const label = post.kind === "back" ? "Back it" : post.kind === "push_back" ? "Push back" : post.kind === "idea" ? "Idea #" + ideaNumbers.get(post.id) : words(post.kind);
+            top.append(element("span", "meta", "Post #" + (index + 1)), element("span", "meta " + agentClass(post.author), post.author), element("span", "badge", label));
+            if (post.ref_post_id) {
+              const ref = posts.findIndex((candidate) => candidate.id === post.ref_post_id);
+              const ideaNumber = ideaNumbers.get(post.ref_post_id);
+              top.append(element("span", "meta", ideaNumber ? "on idea #" + ideaNumber : "on post " + (ref === -1 ? shortId(post.ref_post_id) : "#" + (ref + 1))));
+            }
+            item.append(top, element("p", "", post.text), element("div", "meta", timestamp(post.created_at)));
+            talk.append(item);
+          }
+          if (!posts.length) empty(talk, "No posts yet.");
+          discussion.append(talk);
+          card.append(discussion);
+        } else {
+          const button = element("button", "", "View huddle · " + posts.length + " posts");
+          button.type = "button";
+          button.dataset.focus = "huddle:" + row.id;
+          button.addEventListener("click", () => {
+            selectedHuddle = row.id;
+            renderHuddles(snapshot.huddles);
+            get("huddle-back").focus({ preventScroll: true });
+          });
+          card.append(button);
+        }
+        return card;
+      }
+      function renderHuddles(rows) {
+        const list = get("huddle-list"), view = get("huddle-view");
+        const selected = rows.find((row) => row.id === selectedHuddle);
+        if (!selected) selectedHuddle = null;
+        list.hidden = Boolean(selected);
+        view.hidden = !selected;
+        list.replaceChildren();
+        view.replaceChildren();
+        if (selected) {
+          const controls = element("div", "huddle-controls");
+          const back = element("button", "", "← Back to huddles");
+          back.id = "huddle-back";
+          back.type = "button";
+          back.dataset.focus = "huddle-back";
+          back.addEventListener("click", () => {
+            const previous = selectedHuddle;
+            selectedHuddle = null;
+            renderHuddles(snapshot.huddles);
+            const button = Array.from(list.querySelectorAll("button")).find((node) => node.dataset.focus === "huddle:" + previous);
+            if (button) button.focus({ preventScroll: true });
+          });
+          controls.append(back, element("span", "meta", "Read-only discussion"));
+          const card = huddleCard(selected, true);
+          card.querySelector("details").open = true;
+          view.append(controls, card);
+        } else {
+          for (const row of rows) list.append(huddleCard(row));
+          if (!rows.length) empty(list, "No huddles yet. Your agents can start a brainstorm, design review or standup.");
+        }
+        get("huddle-count").textContent = rows.filter((row) => row.status === "open").length + " open · " + rows.length + " total";
       }
       function renderClaims(rows) {
         const container = get("claims");
@@ -397,25 +660,117 @@
           const card = element("article", "item");
           card.append(element("h3", "item-title", row.path));
           card.append(element("div", "meta " + agentClass(row.agent), row.agent + " · expires " + timestamp(row.expires_at)));
-          if (row.task_id) card.append(element("div", "meta", "Task " + row.task_id));
+          if (row.task_id) card.append(element("div", "meta", "Task " + taskRef(row.task_id)));
           fragment.append(card);
         }
         container.replaceChildren(fragment);
         if (!rows.length) empty(container, "No active file claims.");
         get("claim-count").textContent = String(rows.length);
       }
+      function renderQuestions(rows) {
+        const container = get("questions");
+        const fragment = document.createDocumentFragment();
+        const sorted = [...rows].sort((a, b) => Number(Boolean(a.answered_at)) - Number(Boolean(b.answered_at)) || b.created_at - a.created_at);
+        for (const row of sorted) {
+          const card = element("article", "item");
+          const heading = element("div", "item-heading");
+          heading.append(element("span", "meta " + agentClass(row.sender), row.sender + " → " + row.recipient), element("span", "badge" + (row.answered_at ? " active" : " blocked"), row.answered_at ? "Answered" : "Waiting"));
+          card.append(heading, element("p", "description", row.text), element("div", "meta", timestamp(row.created_at)));
+          if (row.task_id) card.append(element("div", "meta", "Task " + taskRef(row.task_id)));
+          if (row.answer !== null && row.answer !== undefined) {
+            card.append(element("h3", "item-title", "Answer · " + row.recipient), element("p", "description", row.answer), element("div", "meta", timestamp(row.answered_at)));
+          }
+          fragment.append(card);
+        }
+        container.replaceChildren(fragment);
+        if (!rows.length) empty(container, "No questions yet.");
+        get("question-count").textContent = rows.filter((row) => !row.answered_at).length + " open · " + rows.length + " total";
+      }
+      function renderTeam(data) {
+        const container = get("members");
+        const fragment = document.createDocumentFragment();
+        for (const agent of agents) {
+          const member = element("li", "member " + agentClass(agent));
+          member.append(element("span", "avatar", agent === "agent-a" ? "A" : "B"));
+          const main = element("div", "member-main");
+          const name = element("div", "item-heading");
+          name.append(element("strong", agentClass(agent), agent));
+          if ((data.master_prompt.state || {}).lead === agent) name.append(element("span", "badge", "lead"));
+          main.append(name);
+          const current = data.tasks.filter((row) => (row.owner === agent || row.assignee === agent) && ["in_progress", "blocked"].includes(row.status));
+          for (const task of current.slice(0, 1)) main.append(element("p", "", words(task.status) + ": " + excerpt(task.title, 120)));
+          if (current.length > 1) main.append(element("p", "hint", "+" + (current.length - 1) + " more active tasks on the board"));
+          if (!current.length) main.append(element("p", "hint", "No active task recorded"));
+          const claims = data.claims.filter((row) => row.agent === agent);
+          if (claims.length) {
+            const files = element("p", "meta", "Editing: " + claims.slice(0, 2).map((row) => row.path.split("/").pop()).join(", ") + (claims.length > 2 ? " +" + (claims.length - 2) + " more" : ""));
+            files.title = claims.map((row) => row.path).join("\n");
+            main.append(files);
+          }
+          // The viewer snapshot has no presence/heartbeat data; do not invent online status.
+          const activity = [...data.messages.filter((row) => row.sender === agent), ...data.news.filter((row) => row.actor === agent), ...data.audit.filter((row) => row.actor === agent), ...data.patches.filter((row) => row.sender === agent), ...data.questions.filter((row) => row.sender === agent), ...data.huddles.flatMap((row) => (row.posts || []).filter((post) => post.author === agent)), ...(data.master_prompt.sections || []).filter((row) => row.author === agent)];
+          const times = activity.map((row) => row.created_at).concat(data.questions.filter((row) => row.recipient === agent && row.answered_at).map((row) => row.answered_at)).filter((value) => Number.isFinite(new Date(value).getTime()));
+          const latest = times.length ? Math.max(...times.map((value) => new Date(value).getTime())) : null;
+          const seen = element("p", "meta", "Last recorded activity: " + ago(latest));
+          seen.title = timestamp(latest);
+          main.append(seen);
+          member.append(main);
+          fragment.append(member);
+        }
+        const note = element("li", "hint", "Presence is not reported by the transcript.");
+        fragment.append(note);
+        container.replaceChildren(fragment);
+        get("team-count").textContent = agents.length + " agents";
+        const rules = get("rules");
+        rules.replaceChildren();
+        for (const [label, text] of [
+          ["Lead", (data.master_prompt.state || {}).lead || "Whoever starts the shared plan"],
+          ["Tasks", "Agent-owned work, with dependency and contract / skeleton tracking"],
+          ["Master prompt", "Both agents approve before the prompt is locked"],
+          ["File holds", "Shared coordination claims, expiring after 30 minutes"],
+          ["Dashboard", "Viewer-key access; no edits, invites or agent credentials"]
+        ]) {
+          const row = element("div", "rule");
+          row.append(element("dt", "", label), element("dd", "", text));
+          rules.append(row);
+        }
+      }
+      function renderAttention(data) {
+        const questions = data.questions.filter((row) => !row.answered_at);
+        const huddles = data.huddles.filter((row) => row.status === "open" && (row.waiting_on || []).length);
+        const master = data.master_prompt;
+        const voters = (master.state || {}).status === "voting" ? master.waiting_on || [] : [];
+        const total = questions.length + huddles.length + (voters.length ? 1 : 0);
+        const container = get("asks-list");
+        container.replaceChildren();
+        get("asks").hidden = !total;
+        get("asks-title").textContent = total + (total === 1 ? " thing is" : " things are") + " waiting on the team";
+        for (const row of questions.slice(0, 4)) container.append(element("li", "", row.sender + " asked “" + excerpt(row.text) + "” · waiting on " + row.recipient));
+        for (const row of huddles.slice(0, 4)) container.append(element("li", "", words(row.kind) + ": “" + excerpt(row.topic) + "” · waiting on " + row.waiting_on.join(", ")));
+        if (voters.length) container.append(element("li", "", "Master prompt approval · waiting on " + voters.join(", ")));
+        if (questions.length > 4 || huddles.length > 4) container.append(element("li", "hint", "More items are listed in Questions and Huddles below."));
+      }
       function renderNews(rows) {
         const container = get("news");
+        const first = rendered.news === undefined;
+        const atTop = container.scrollTop < 80;
+        const previousHeight = container.scrollHeight;
+        const previousTop = container.scrollTop;
         const fragment = document.createDocumentFragment();
-        for (const row of rows) {
-          const card = element("article", "item");
-          card.append(element("h3", "item-title", row.summary));
-          card.append(element("div", "meta " + agentClass(row.actor), row.kind + " · " + row.actor + " · " + timestamp(row.created_at)));
+        for (const row of [...rows].reverse()) {
+          const card = element("article", "feed-entry");
+          card.append(element("div", "meta " + agentClass(row.actor), row.actor + " · " + words(row.kind)));
+          card.append(element("p", "", row.summary));
+          const time = element("time", "meta", timestamp(row.created_at));
+          if (Number.isFinite(new Date(row.created_at).getTime())) time.dateTime = new Date(row.created_at).toISOString();
+          time.title = ago(row.created_at);
+          card.append(time);
           card.append(element("div", "meta", row.ref));
           fragment.append(card);
         }
         container.replaceChildren(fragment);
         if (!rows.length) empty(container, "No coordination news yet.");
+        container.scrollTop = first || atTop ? 0 : previousTop + container.scrollHeight - previousHeight;
         get("news-count").textContent = String(rows.length);
       }
       async function poll() {
@@ -439,14 +794,19 @@
           if (![data.messages, data.tasks, data.patches, data.audit, data.events].every(Array.isArray) || !Number.isSafeInteger(data.last_event_id)) throw new Error("Invalid snapshot");
           // Defaults keep this dashboard usable with older server snapshots.
           data.master_prompt = data.master_prompt || {};
-          for (const name of ["huddles", "claims", "news"]) if (!Array.isArray(data[name])) data[name] = [];
-          for (const [name, render] of [["messages", renderMessages], ["tasks", renderTasks], ["patches", renderPatches], ["audit", renderAudit], ["master_prompt", renderMaster], ["huddles", renderHuddles], ["claims", renderClaims], ["news", renderNews]]) {
+          for (const name of ["huddles", "claims", "questions", "news"]) if (!Array.isArray(data[name])) data[name] = [];
+          data.claims = data.claims.filter((row) => new Date(row.expires_at).getTime() > Date.now());
+          snapshot = data;
+          for (const [name, id, render] of [["messages", "messages", renderMessages], ["tasks", "tasks", renderTasks], ["patches", "patches", renderPatches], ["audit", "audit", renderAudit], ["master_prompt", "master", renderMaster], ["huddles", "huddles", renderHuddles], ["claims", "claims", renderClaims], ["questions", "questions", renderQuestions], ["news", "news", renderNews]]) {
             const signature = JSON.stringify(data[name]);
             if (signature !== rendered[name]) {
-              render(data[name]);
+              if (["messages", "audit", "news"].includes(name)) render(data[name]);
+              else preserveView(id, () => render(data[name]));
               rendered[name] = signature;
             }
           }
+          renderTeam(data);
+          renderAttention(data);
           lastEventId = data.last_event_id;
           const now = new Date();
           get("last-updated").textContent = now.toLocaleTimeString();

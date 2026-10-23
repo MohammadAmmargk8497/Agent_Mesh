@@ -443,7 +443,7 @@ class Handler(BaseHTTPRequestHandler):
                 if task["status"] != "open":
                     raise HttpError(409, "task is not open")
                 if task["waiting_on"]:
-                    raise HttpError(409, "waiting on dependencies")
+                    raise coordination.CoordinationError(409, "waiting on dependencies", waiting_on=task["waiting_on"])
                 db.execute("UPDATE tasks SET status='in_progress',updated_at=? WHERE id=?", (now, task_id))
                 state.emit(task["created_by"], agent, "task_claimed", task_id)
                 coordination.news(state, agent, "task_claimed", task_id, "Task claimed", now)
