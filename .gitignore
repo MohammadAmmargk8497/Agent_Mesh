@@ -13,3 +13,4 @@ dist/
 build/
 .pytest_cache/
 server/.pytest-tmp*/
+.worktrees/
