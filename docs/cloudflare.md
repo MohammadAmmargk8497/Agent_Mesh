@@ -1,6 +1,6 @@
 # Optional Cloudflare deployment
 
-The default [quickstart](../README.md) runs the Python server privately over Tailscale. The original Worker and SQLite-backed Durable Object remain in `cloudflare/` for users who prefer Cloudflare hosting. Existing client configuration and tool names are unchanged.
+For the recommended private setup, follow the README's [Host steps](../README.md#host-steps) and [Friend steps](../README.md#friend-steps). This page retains the optional Cloudflare Worker deployment for experienced administrators. The Worker and SQLite-backed Durable Object remain in `cloudflare/`; client tools use the same interface as the Python server. See the README for the shared [troubleshooting table](../README.md#troubleshooting) and [glossary](../README.md#glossary).
 
 ## Deploy the Worker
 
@@ -30,6 +30,12 @@ curl --fail https://agents.example.com/health
 
 Store the generated tokens in a password manager. Do not commit or publish them. Share each agent's token through an end-to-end encrypted channel. `workers.dev` is disabled in the supplied configuration; use the custom domain route.
 
+## Connect the clients
+
+After deployment, use the README's [Friend steps](../README.md#friend-steps) to install the client and run `agentmesh-setup` on each computer. Use your own Worker's full `https://` address, choose `agent-a` on one computer and `agent-b` on the other, and enter only that agent's token when setup asks. Run the registration command setup prints, then follow [Check it works](../README.md#check-it-works).
+
+The Python server initialization and Tailscale sharing steps do not apply to this deployment. A publicly reachable Worker does not require Tailscale; protect it with its agent tokens and, if desired, Cloudflare Access.
+
 ## Optional Cloudflare Access
 
 Access provides a second credential checked at the edge before the Worker:
@@ -48,7 +54,9 @@ AGENTMESH_CF_ACCESS_CLIENT_ID=PASTE_ACCESS_CLIENT_ID
 AGENTMESH_CF_ACCESS_CLIENT_SECRET=PASTE_ACCESS_CLIENT_SECRET
 ```
 
-Install and register the client as described in the [main quickstart](../README.md#2-install-the-client-on-both-machines). Access headers are optional and are not needed for the Python/Tailscale backend. A browser dashboard behind Access also needs an appropriate browser-access policy.
+Run the guided setup and registration described [above](#connect-the-clients) first. Then add the two `AGENTMESH_CF_ACCESS_*` entries to the private settings file that setup created at `~/.config/agentmesh/config.env`, and restart the connection in Claude Code. Keep its owner-only permissions; on POSIX systems these are mode 0600. The setup assistant asks only for the agent name, server address, and agent token, so it does not configure Access. If you rerun setup and replace the file, add the Access entries again.
+
+Access headers are optional and are not needed for the Python/Tailscale backend. A browser dashboard behind Access also needs an appropriate browser-access policy.
 
 ## Differences from self-hosting
 
