@@ -14,3 +14,6 @@ build/
 .pytest_cache/
 server/.pytest-tmp*/
 .worktrees/
+.omx/
+.pytest-tmp/
+.codex-flow/
