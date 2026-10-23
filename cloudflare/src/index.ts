@@ -1,5 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 import dashboard from "./dashboard.html";
+import signin from "./signin.html";
 import hubDashboard from "./hub_dashboard.html";
 import hubJoin from "./hub_join.html";
 export { HubRoom } from "./openhuddle/hub-room";
@@ -91,9 +92,10 @@ export default {
     }
     const dashboardHost = url.hostname === "agentmesh.zahid.win";
     if (dashboardHost && request.method === "GET" &&
-        (url.pathname === "/" || url.pathname === "/index.html")) {
+        (url.pathname === "/" || url.pathname === "/index.html" || url.pathname === "/viewer")) {
       const nonce = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(16))));
-      return new Response(dashboard.replaceAll("__AGENTMESH_NONCE__", nonce), { headers: {
+      const page = url.pathname === "/viewer" ? dashboard : signin;
+      return new Response(page.replaceAll("__AGENTMESH_NONCE__", nonce), { headers: {
         "content-type": "text/html; charset=utf-8",
         "cache-control": "no-store",
         "x-content-type-options": "nosniff",

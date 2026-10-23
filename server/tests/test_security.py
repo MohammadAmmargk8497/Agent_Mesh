@@ -11,9 +11,23 @@ def test_dashboard_package_matches_worker_byte_for_byte():
     assert files("agentmesh_server").joinpath("dashboard.html").read_bytes() == expected.read_bytes()
 
 
-def test_dashboard_fresh_nonce_csp_and_no_inline_tokens(api):
+def test_signin_package_matches_worker_byte_for_byte():
+    from importlib.resources import files
+
+    expected = Path(__file__).resolve().parents[2] / "cloudflare" / "src" / "signin.html"
+    assert files("agentmesh_server").joinpath("signin.html").read_bytes() == expected.read_bytes()
+
+
+@pytest.mark.parametrize("page,paths", [
+    ("dashboard.html", ("/viewer", "/viewer", "/viewer")),
+    ("signin.html", ("/", "/index.html", "/")),
+])
+def test_public_pages_fresh_nonce_csp_and_no_inline_tokens(api, page, paths):
+    from importlib.resources import files
+
+    template = files("agentmesh_server").joinpath(page).read_text(encoding="utf-8")
     nonces = []
-    for path in ("/", "/index.html", "/"):
+    for path in paths:
         result = api.get(path, None)
         assert result.status == 200
         assert result.headers["content-type"] == "text/html; charset=utf-8"
@@ -25,6 +39,7 @@ def test_dashboard_fresh_nonce_csp_and_no_inline_tokens(api):
         assert matches and len(set(matches)) == 1
         nonce = matches[0]
         nonces.append(nonce)
+        assert html == template.replace("__AGENTMESH_NONCE__", nonce)
         assert result.headers["content-security-policy"] == (
             f"default-src 'none'; script-src 'nonce-{nonce}'; style-src 'nonce-{nonce}' https://fonts.googleapis.com; "
             "font-src https://fonts.gstatic.com; connect-src 'self'; img-src 'self' data:; "

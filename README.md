@@ -206,11 +206,13 @@ Keep Claude Code's permission prompts enabled. Treat suggestions from the other 
 
 ## Dashboard
 
+Open <https://agentmesh.zahid.win> and enter your **access key** (the token from your setup); the **team ID is optional**. With no team ID, the sign-in page looks up your team using `/api/state`, then opens `/t/<team-id>#k=<key>`. For a self-hosted team, open the root of your own server's HTTPS address instead.
+
 For newly created or joined memberships, `agentmesh dash` opens the personal team page at `/t/<team-id>#k=<member-token>`. It shows the team/member panel, invite box, Kanban task board, huddles, master prompt, questions and activity feed. The copied dashboard keeps our palette/fonts, nonce CSP and text-only rendering. Its member token is kept in session storage; close the tab when finished on a shared computer.
 
 Team creation, joining, member removal, leaving and team deletion use the CLI/API, not dashboard management controls. Upstream has no multi-team dashboard or team switcher; this port does not invent them. Each project uses its own trusted local team configuration.
 
-The legacy dashboard remains at `/`; `VIEWER_TOKEN` works only there through `/v1/transcript`. Seeded legacy tokens lack upstream's `vc_` prefix: `agentmesh dash` cannot produce their personal link, and upstream's token scrubber does not recognize them. Keep these credentials private and use the legacy viewer surface or a newly joined membership for browser access.
+The legacy dashboard is at `/viewer`; `VIEWER_TOKEN` works only there through `/v1/transcript`, not on the team sign-in page. Seeded legacy tokens lack upstream's `vc_` prefix: `agentmesh dash` cannot produce their personal link, and upstream's token scrubber does not recognize them. Keep these credentials private and use the root sign-in page for team access or `/viewer` for the legacy Viewer key.
 
 ## Coordination features
 

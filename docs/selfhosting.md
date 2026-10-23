@@ -47,7 +47,7 @@ The first `/api` request lazily starts the child, creating a `default` team only
 
 Inside a project repository, `agentmesh create` makes another team and returns token/invite/dashboard URLs. `agentmesh join <invite-link>` adds a member; `agentmesh-setup '<invite-link>' --as friend` instead joins and writes the existing `config.env` format. An invite is reusable for seven days; `agentmesh invite` retrieves it and owner-only `agentmesh invite --rotate` replaces it. Use `agentmesh remove <name>`, `leave`, `delete-team --yes`, `status`, `dash` and `doctor` for membership and inspection. Deletion/removal is not a dashboard control; upstream has no multi-team viewer or switcher.
 
-New client tools require Node.js 20+ and use `team_sync`, `team_post`, `team_ask`, `team_reply`, `huddle`, `master_prompt`, `plan`, `task`, `claim`, `team_settings` (README has the old→new table). `agentmesh-mcp-legacy` preserves old `/v1` names and the existing notify/auto-response behavior. Keep `VIEWER_TOKEN` for the read-only legacy `/` dashboard only. Legacy seeded tokens lack `vc_`, so upstream `agentmesh dash` cannot produce their personal link and its scrubber does not redact them.
+New client tools require Node.js 20+ and use `team_sync`, `team_post`, `team_ask`, `team_reply`, `huddle`, `master_prompt`, `plan`, `task`, `claim`, `team_settings` (README has the old→new table). `agentmesh-mcp-legacy` preserves old `/v1` names and the existing notify/auto-response behavior. Keep `VIEWER_TOKEN` for the read-only legacy `/viewer` dashboard only. Legacy seeded tokens lack `vc_`, so upstream `agentmesh dash` cannot produce their personal link and its scrubber does not redact them; use the root sign-in page for their team access.
 
 ## Direct-tailnet HTTP (advanced)
 
@@ -57,7 +57,8 @@ The client and setup assistant accept literal addresses in Tailscale's `100.64.0
 
 ## Limits and access controls
 
-- `/health`, `/`, and `/index.html` are public. The latter two serve the dashboard with a fresh nonce-based Content Security Policy and no embedded credentials.
+- `/health`, `/`, `/index.html`, and `/viewer` are public. `/` and `/index.html` serve the sign-in page; `/viewer` serves the unchanged legacy dashboard. All three HTML routes use a fresh nonce-based Content Security Policy and no embedded credentials. The Python server has no hostname restriction.
+- At the root of your server's HTTPS address, enter your access key (the token from setup) and an optional team ID. With no team ID, the sign-in page calls `/api/state` with the key as a Bearer token, reads `team.id`, and opens `/t/<team-id>#k=<key>` on the same server.
 - Legacy bearer tokens determine identity through constant-time comparison; hub tokens authenticate against active database member SHA-256 hashes. Request-supplied agent identity headers do not authenticate callers. The legacy Viewer key authorizes only `GET /v1/transcript` and reads both members' shared work.
 - The new team dashboard uses member records from `hub.db`; the legacy dashboard keeps the Viewer key read-only.
 - Legacy `/v1` allows 120 requests per 60 seconds for an authenticated identity or unauthenticated IP, and at most four concurrent long-poll waiters per agent. Hub `/api` keeps upstream token buckets: 20 creates/joins per IP per hour, 600 requests per member per minute, 60 bad-auth attempts per IP per minute, and at most three live streams per member. The request-body cap is 256 KiB; individual API fields have lower limits.
