@@ -338,7 +338,8 @@ class Handler(BaseHTTPRequestHandler):
 
         rows = state.rows
         db = state.db
-        if agent == "viewer":
+        dashboard_state = path == "/v1/dashboard/state" and method == "GET"
+        if agent == "viewer" or dashboard_state:
             raw_after = param("after")
             if raw_after is not None and not re.fullmatch(r"-?\d+", raw_after, re.ASCII):
                 raise HttpError(400, "after must be an integer")
@@ -346,15 +347,20 @@ class Handler(BaseHTTPRequestHandler):
             if not math.isfinite(after_number) or abs(after_number) > 2**53 - 1:
                 raise HttpError(400, "after must be an integer")
             after = int(after_number)
-            events = rows("SELECT * FROM events WHERE id>? ORDER BY id ASC LIMIT 200", after)
+            events = rows("SELECT * FROM events WHERE id>?" + (" AND recipient=?" if dashboard_state else "") + " ORDER BY id ASC LIMIT 200", after, *((agent,) if dashboard_state else ()))
+            tasks = [_task_dict(row, state) for row in rows("SELECT * FROM tasks" + (" WHERE created_by=? OR assignee=? OR (status='open' AND id IN (SELECT task_id FROM dashboard_tasks WHERE state='open'))" if dashboard_state else "") + " ORDER BY created_at DESC LIMIT 200", *((agent, agent) if dashboard_state else ()))[::-1]]
+            if dashboard_state:
+                for task in tasks:
+                    task["dashboard_status"] = coordination.dashboard_status(state, task)
             return {
-                "messages": rows("SELECT * FROM messages ORDER BY created_at DESC LIMIT 500")[::-1],
-                "tasks": [_task_dict(row, state) for row in rows("SELECT * FROM tasks ORDER BY created_at DESC LIMIT 200")[::-1]],
+                "messages": rows("SELECT * FROM messages" + (" WHERE sender=? OR recipient=?" if dashboard_state else "") + " ORDER BY created_at DESC LIMIT 500", *((agent, agent) if dashboard_state else ()))[::-1],
+                "tasks": tasks,
                 "patches": rows("SELECT id,sender,title,task_id,created_at,length(text) AS size FROM patches ORDER BY created_at DESC LIMIT 50")[::-1],
-                "audit": rows("SELECT * FROM audit ORDER BY id DESC LIMIT 200")[::-1],
+                "audit": rows("SELECT * FROM audit" + (" WHERE actor=?" if dashboard_state else "") + " ORDER BY id DESC LIMIT 200", *((agent,) if dashboard_state else ()))[::-1],
                 "events": events,
                 "last_event_id": events[-1]["id"] if events else after,
-                **coordination.snapshot(state, now),
+                **coordination.snapshot(state, now, agent=agent if dashboard_state else None),
+                **({"me": agent} if dashboard_state else {}),
             }, 200
         if path == "/v1/transcript":
             raise HttpError(403, "viewer token required")

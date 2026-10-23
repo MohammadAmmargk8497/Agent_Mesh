@@ -32,9 +32,27 @@ function optionalId(value: unknown): string | null {
   return value;
 }
 async function readJson(request: Request): Promise<any> {
-  if (Number(request.headers.get("content-length") ?? "0") > 256 * 1024) throw new HttpError(413, "request body too large");
-  const buf = await request.arrayBuffer();
-  if (buf.byteLength > 256 * 1024) throw new HttpError(413, "request body too large");
+  const maximum = 256 * 1024;
+  if (Number(request.headers.get("content-length") ?? "0") > maximum) throw new HttpError(413, "request body too large");
+  const reader = request.body?.getReader(), chunks: Uint8Array[] = [];
+  let length = 0;
+  if (reader) {
+    try {
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        length += value.byteLength;
+        if (length > maximum) {
+          await reader.cancel();
+          throw new HttpError(413, "request body too large");
+        }
+        chunks.push(value);
+      }
+    } finally { reader.releaseLock(); }
+  }
+  const buf = new Uint8Array(length);
+  let offset = 0;
+  for (const chunk of chunks) { buf.set(chunk, offset); offset += chunk.byteLength; }
   let body: unknown;
   try { body = JSON.parse(new TextDecoder().decode(buf)); } catch { throw new HttpError(400, "invalid JSON"); }
   if (!body || typeof body !== "object" || Array.isArray(body)) throw new HttpError(400, "body must be a JSON object");
@@ -56,9 +74,13 @@ export class Coordination {
       CREATE TABLE IF NOT EXISTS file_claims (path TEXT PRIMARY KEY, agent TEXT NOT NULL, task_id TEXT, expires_at INTEGER NOT NULL, created_at INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS huddles (id TEXT PRIMARY KEY, owner TEXT NOT NULL, kind TEXT NOT NULL, topic TEXT NOT NULL, status TEXT NOT NULL, decision TEXT, created_at INTEGER NOT NULL, closed_at INTEGER);
       CREATE TABLE IF NOT EXISTS huddle_posts (id TEXT PRIMARY KEY, huddle_id TEXT NOT NULL, author TEXT NOT NULL, kind TEXT NOT NULL, text TEXT NOT NULL, ref_post_id TEXT, created_at INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS huddle_votes (huddle_id TEXT NOT NULL, ref_post_id TEXT NOT NULL, agent TEXT NOT NULL, vote TEXT NOT NULL, note TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, PRIMARY KEY(huddle_id,ref_post_id,agent));
+      CREATE TABLE IF NOT EXISTS dashboard_tasks (task_id TEXT PRIMARY KEY, state TEXT NOT NULL CHECK(state IN ('open','assigned')));
+      CREATE TRIGGER IF NOT EXISTS dashboard_tasks_status AFTER UPDATE OF status ON tasks WHEN NEW.status<>'open' OR OLD.status<>'open' BEGIN DELETE FROM dashboard_tasks WHERE task_id=NEW.id; END;
       CREATE TABLE IF NOT EXISTS questions (id TEXT PRIMARY KEY, sender TEXT NOT NULL, recipient TEXT NOT NULL, text TEXT NOT NULL, task_id TEXT, answer TEXT, created_at INTEGER NOT NULL, answered_at INTEGER);
       CREATE TABLE IF NOT EXISTS news (id INTEGER PRIMARY KEY AUTOINCREMENT, actor TEXT NOT NULL, kind TEXT NOT NULL, ref TEXT NOT NULL, summary TEXT NOT NULL, created_at INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS news_seen (agent TEXT PRIMARY KEY, last_id INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS news_details (news_id INTEGER PRIMARY KEY, data TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS member_settings (agent TEXT PRIMARY KEY, auto_respond INTEGER NOT NULL DEFAULT 1 CHECK(auto_respond IN (0,1)));
       CREATE INDEX IF NOT EXISTS huddle_posts_huddle ON huddle_posts(huddle_id,created_at);
     `);
@@ -78,10 +100,12 @@ export class Coordination {
   private state(): any {
     return this.one("SELECT status,revision,locked_version,round,lead FROM master_state WHERE id=1");
   }
-  private news(actor: Agent, kind: string, ref: string, summary: string, now: number): number {
+  private news(actor: Agent, kind: string, ref: string, summary: string, now: number, details?: unknown): number {
     let capped = summary.slice(0, 8000);
     if (/[\uD800-\uDBFF]$/.test(capped)) capped = capped.slice(0, -1);
-    return Number(this.sql("INSERT INTO news(actor,kind,ref,summary,created_at) VALUES (?,?,?,?,?) RETURNING id", actor, kind, ref, capped, now).one().id);
+    const id = Number(this.sql("INSERT INTO news(actor,kind,ref,summary,created_at) VALUES (?,?,?,?,?) RETURNING id", actor, kind, ref, capped, now).one().id);
+    if (details !== undefined) this.sql("INSERT INTO news_details(news_id,data) VALUES (?,?)", id, JSON.stringify(details));
+    return id;
   }
   taskNews(actor: Agent, kind: string, ref: string, now: number) {
     this.news(actor, kind, ref, `Task ${kind.slice(5).replaceAll("_", " ")}`, now);
@@ -155,34 +179,90 @@ export class Coordination {
       }
     }
   }
-  huddle(id: string): any {
+  huddle(id: string, includeDashboard = false): any {
     const huddle = this.one("SELECT * FROM huddles WHERE id=?", id);
     if (!huddle) throw new HttpError(404, "huddle not found");
     const posts = this.rows("SELECT * FROM huddle_posts WHERE huddle_id=? ORDER BY created_at,rowid", id);
-    return { ...huddle, posts, waiting_on: huddle.status === "open" ? AGENTS.filter(a => !posts.some(p => p.author === a)) : [] };
+    const votes = includeDashboard ? this.rows("SELECT * FROM huddle_votes WHERE huddle_id=? ORDER BY created_at,agent", id) : [];
+    const waiting = huddle.status === "open" ? AGENTS.filter(a => !posts.some(p => p.author === a)) : [];
+    return { ...huddle, posts, waiting_on: waiting, ...(includeDashboard ? { votes,
+      dashboard_waiting_on: waiting.filter(a => !(huddle.kind !== "standup" && huddle.owner === a) && !votes.some(v => v.agent === a)) } : {}) };
   }
-  snapshot(now: number): any {
+  snapshot(now: number, agent?: Agent): any {
+    const visible = agent ? new Set(this.rows("SELECT id FROM tasks WHERE created_by=? OR assignee=? OR (status='open' AND id IN (SELECT task_id FROM dashboard_tasks WHERE state='open'))", agent, agent).map(row => row.id)) : undefined;
+    const news = this.rows("SELECT * FROM news ORDER BY id DESC LIMIT 200").reverse()
+      .filter(item => !visible || !item.kind.startsWith("task_") || visible.has(item.ref));
     return { master_prompt: this.master(),
-      huddles: this.rows("SELECT id FROM huddles ORDER BY created_at DESC LIMIT 100").map(h => this.huddle(h.id)),
+      huddles: this.rows("SELECT id FROM huddles ORDER BY created_at DESC LIMIT 100").map(h => {
+        const item = this.huddle(h.id, true);
+        if (agent) item.waiting_on = item.dashboard_waiting_on;
+        return item;
+      }),
       claims: this.rows("SELECT * FROM file_claims WHERE expires_at>? ORDER BY path", now),
-      questions: this.rows("SELECT * FROM questions ORDER BY created_at DESC LIMIT 200").reverse(),
-      news: this.rows("SELECT * FROM news ORDER BY id DESC LIMIT 200").reverse() };
+      questions: (agent ? this.rows("SELECT * FROM questions WHERE sender=? OR recipient=? ORDER BY created_at DESC LIMIT 200", agent, agent)
+        : this.rows("SELECT * FROM questions ORDER BY created_at DESC LIMIT 200")).reverse(),
+      news,
+      feed_details: Object.fromEntries(this.rows("SELECT * FROM news_details WHERE news_id IN (SELECT id FROM news ORDER BY id DESC LIMIT 200)").map(row => [String(row.news_id), JSON.parse(row.data)])),
+      member_settings: AGENTS.map(agent => ({ agent, auto_respond: this.autoRespondEnabled(agent) })) };
+  }
+  dashboardStatus(task: any): string {
+    if (task.status !== "open") return task.status;
+    return this.one("SELECT state FROM dashboard_tasks WHERE task_id=?", task.id)?.state ?? "proposed";
+  }
+  private dashboardTaskAction(id: string, action: string, body: any, agent: Agent, now: number): Response {
+    const shared = action === "take" ? " OR (status='open' AND EXISTS (SELECT 1 FROM dashboard_tasks WHERE task_id=tasks.id AND state='open'))" : "";
+    const raw = this.one(`SELECT * FROM tasks WHERE id=? AND (created_by=? OR assignee=?${shared})`, id, agent, agent);
+    if (!raw) throw new HttpError(404, "task not found");
+    const task = this.parseTask(raw), status = this.dashboardStatus(task);
+    const summary = body.summary === undefined ? "Completed from dashboard" : cleanText(body.summary);
+    let nextStatus: string;
+    if (["accept", "decline"].includes(action)) {
+      if (task.assignee !== agent) throw new HttpError(403, "only the proposed assignee may respond");
+      if (status !== "proposed") throw new HttpError(409, "task is not proposed");
+      nextStatus = action === "accept" ? "assigned" : "open";
+    } else if (action === "take") {
+      if (!["proposed", "open"].includes(status)) throw new HttpError(409, "task is not available");
+      nextStatus = "assigned";
+      this.sql("UPDATE tasks SET assignee=? WHERE id=?", agent, id);
+    } else {
+      if (task.assignee !== agent) throw new HttpError(403, "only the assignee may update this task");
+      const allowed = action === "release" ? ["assigned", "in_progress"] : action === "start" ? ["assigned"] : ["in_progress"];
+      if (!allowed.includes(status)) throw new HttpError(409, "task is not in the required state");
+      if (action === "start" && task.waiting_on.length) return json({ error: "waiting on dependencies", waiting_on: task.waiting_on }, 409);
+      nextStatus = ({ start: "in_progress", release: "open", finish: "done" } as Record<string, string>)[action];
+    }
+    const legacyStatus = ["open", "assigned"].includes(nextStatus) ? "open" : nextStatus;
+    this.sql("UPDATE tasks SET status=?,updated_at=? WHERE id=?", legacyStatus, now, id);
+    if (["open", "assigned"].includes(nextStatus)) this.sql("INSERT INTO dashboard_tasks(task_id,state) VALUES (?,?) ON CONFLICT(task_id) DO UPDATE SET state=excluded.state", id, nextStatus);
+    else this.sql("DELETE FROM dashboard_tasks WHERE task_id=?", id);
+    if (action === "finish") this.sql("UPDATE tasks SET result=? WHERE id=?", summary, id);
+    if (["release", "finish"].includes(action)) this.sql("DELETE FROM file_claims WHERE task_id=? AND agent=?", id, agent);
+    const event = ({ take: "task_taken", accept: "task_accepted", decline: "task_declined", start: "task_claimed", release: "task_released", finish: "task_done" } as Record<string, string>)[action];
+    this.news(agent, event, id, `Task ${action}: ${task.title}`, now);
+    this.broadcast(agent, event, id);
+    if (action === "finish") this.taskUnblocked(id, agent, now);
+    return json({ id, status: legacyStatus, dashboard_status: nextStatus });
   }
   sweep(now: number) {
     this.sql("DELETE FROM file_claims WHERE expires_at<=?", now);
     this.sql("DELETE FROM news WHERE created_at<?", now - 30 * DAY);
+    this.sql("DELETE FROM news_details WHERE news_id NOT IN (SELECT id FROM news)");
     this.sql("DELETE FROM huddle_posts WHERE huddle_id IN (SELECT id FROM huddles WHERE status='closed' AND closed_at<?)", now - 90 * DAY);
     this.sql("DELETE FROM huddles WHERE status='closed' AND closed_at<?", now - 90 * DAY);
+    this.sql("DELETE FROM huddle_votes WHERE huddle_id NOT IN (SELECT id FROM huddles)");
+    this.sql("DELETE FROM dashboard_tasks WHERE task_id NOT IN (SELECT id FROM tasks)");
     this.sql("DELETE FROM questions WHERE answered_at IS NOT NULL AND answered_at<?", now - 30 * DAY);
   }
   async route(request: Request, agent: Agent, path: string, method: string, url: URL, now: number): Promise<Response | undefined> {
     const known = ["/v1/settings", "/v1/master", "/v1/master/sections", "/v1/master/submit", "/v1/master/vote", "/v1/tasks/propose", "/v1/claims", "/v1/claims/release", "/v1/huddles", "/v1/questions", "/v1/news", "/v1/commits"].includes(path)
-      || /^\/v1\/huddles\/[0-9a-f-]{36}(?:\/(?:posts|close))?$/i.test(path)
+      || /^\/v1\/huddles\/[0-9a-f-]{36}(?:\/(?:posts|comments|votes|close))?$/i.test(path)
+      || /^\/v1\/dashboard\/tasks\/[0-9a-f-]{36}\/(?:take|accept|decline|start|release|finish)$/i.test(path)
       || /^\/v1\/questions\/[0-9a-f-]{36}\/answer$/i.test(path);
     if (!known) return undefined;
     // Finish all asynchronous input and hashing before the atomic SQLite mutation.
     const mutation = ["/v1/settings", "/v1/master/sections", "/v1/master/submit", "/v1/master/vote", "/v1/tasks/propose", "/v1/claims", "/v1/claims/release", "/v1/huddles", "/v1/questions", "/v1/commits"].includes(path)
-      || /^\/v1\/huddles\/[0-9a-f-]{36}\/(?:posts|close)$/i.test(path)
+      || /^\/v1\/huddles\/[0-9a-f-]{36}\/(?:posts|comments|votes|close)$/i.test(path)
+      || /^\/v1\/dashboard\/tasks\/[0-9a-f-]{36}\/(?:take|accept|decline|start|release|finish)$/i.test(path)
       || /^\/v1\/questions\/[0-9a-f-]{36}\/answer$/i.test(path);
     const body = method === "POST" && mutation ? await readJson(request) : undefined;
     let digest: string | undefined;
@@ -194,6 +274,11 @@ export class Coordination {
     return this.transact(() => this.handle(body, agent, path, method, url, now, digest));
   }
   private handle(body: any, agent: Agent, path: string, method: string, url: URL, now: number, digest?: string): Response | undefined {
+    const dashboardTask = path.match(/^\/v1\/dashboard\/tasks\/([0-9a-f-]{36})\/(take|accept|decline|start|release|finish)$/i);
+    if (dashboardTask) {
+      if (method !== "POST") throw new HttpError(405, "method not allowed");
+      return this.dashboardTaskAction(dashboardTask[1], dashboardTask[2].toLowerCase(), body, agent, now);
+    }
     if (path === "/v1/settings" && ["GET", "POST"].includes(method)) {
       if (method === "POST") {
         if (typeof body.auto_respond !== "boolean") throw new HttpError(400, "auto_respond must be a boolean");
@@ -230,7 +315,8 @@ export class Coordination {
       if (!["approve", "reject"].includes(body.decision)) throw new HttpError(400, "decision must be approve or reject");
       const note = body.note === undefined ? null : cleanText(body.note);
       this.sql("INSERT INTO master_votes(round,agent,decision,note) VALUES (?,?,?,?) ON CONFLICT(round,agent) DO UPDATE SET decision=excluded.decision,note=excluded.note", state.round, agent, body.decision, note);
-      this.news(agent, "master_voted", String(state.round), "Master prompt vote recorded", now);
+      this.news(agent, "master_voted", String(state.round), "Master prompt vote recorded", now,
+        { decision: body.decision, note, revision: state.revision });
       this.broadcast(agent, "master_voted", String(state.round));
       if (body.decision === "reject") this.sql("UPDATE master_state SET status='draft' WHERE id=1");
       else if (Number(this.one("SELECT COUNT(*) AS count FROM master_votes WHERE round=? AND decision='approve'", state.round).count) === AGENTS.length) {
@@ -297,10 +383,29 @@ export class Coordination {
       this.news(agent, "huddle_started", id, `Huddle started: ${topic}`, now); this.broadcast(agent, "huddle_started", id);
       return json({ id, created_at: now }, 201);
     }
-    const hm = path.match(/^\/v1\/huddles\/([0-9a-f-]{36})(?:\/(posts|close))?$/i);
+    const hm = path.match(/^\/v1\/huddles\/([0-9a-f-]{36})(?:\/(posts|comments|votes|close))?$/i);
     if (hm) {
       const huddle = this.huddle(hm[1]);
       if (method === "GET" && !hm[2]) return json({ huddle });
+      if (method === "POST" && ["comments", "votes"].includes(hm[2])) {
+        if (huddle.status !== "open") throw new HttpError(409, "huddle is closed");
+        const ref = body.ref_post_id ?? null;
+        const referenced = typeof ref === "string" && UUID.test(ref) ? huddle.posts.find((p: any) => p.id === ref) : undefined;
+        if ((ref !== null && !referenced) || (hm[2] === "votes" && !referenced)) throw new HttpError(400, "ref_post_id must refer to this huddle");
+        if (hm[2] === "comments") {
+          const text = cleanText(body.text), id = crypto.randomUUID();
+          this.sql("INSERT INTO huddle_posts(id,huddle_id,author,kind,text,ref_post_id,created_at) VALUES (?,?,?,'comment',?,?,?)", id, huddle.id, agent, text, ref, now);
+          this.news(agent, "huddle_commented", huddle.id, `Huddle comment: ${huddle.topic} — ${text}`, now); this.broadcast(agent, "huddle_commented", huddle.id);
+          return json({ id, created_at: now }, 201);
+        }
+        if (referenced.kind !== "idea") throw new HttpError(400, "only ideas may receive votes");
+        if (referenced.author === agent) throw new HttpError(403, "cannot vote on your own idea");
+        if (!["up", "down"].includes(body.vote)) throw new HttpError(400, "vote must be up or down");
+        const note = body.note === undefined ? null : cleanText(body.note, 500);
+        this.sql("INSERT INTO huddle_votes(huddle_id,ref_post_id,agent,vote,note,created_at,updated_at) VALUES (?,?,?,?,?,?,?) ON CONFLICT(huddle_id,ref_post_id,agent) DO UPDATE SET vote=excluded.vote,note=excluded.note,updated_at=excluded.updated_at", huddle.id, ref, agent, body.vote, note, now, now);
+        this.news(agent, "huddle_voted", huddle.id, `${body.vote === "up" ? "Backed" : "Pushed back on"} idea ${ref} in ${huddle.topic}${note ? ": " + note : ""}`, now); this.broadcast(agent, "huddle_voted", huddle.id);
+        return json({ huddle_id: huddle.id, ref_post_id: ref, agent, vote: body.vote, note });
+      }
       if (method === "POST" && hm[2] === "posts") {
         if (huddle.status !== "open") throw new HttpError(409, "huddle is closed");
         const automatic = this.automaticReply(body, agent);
@@ -314,7 +419,7 @@ export class Coordination {
         this.news(agent, "huddle_posted", huddle.id, `Huddle contribution: ${huddle.topic}`, now); this.broadcast(agent, "huddle_posted", huddle.id);
         return json({ id, created_at: now }, 201);
       }
-      if (method !== "POST" || !["posts", "close"].includes(hm[2])) throw new HttpError(405, "method not allowed");
+      if (method !== "POST" || !["posts", "comments", "votes", "close"].includes(hm[2])) throw new HttpError(405, "method not allowed");
       if (method === "POST" && hm[2] === "close") {
         if (huddle.owner !== agent) throw new HttpError(403, "only the owner may close");
         if (huddle.status !== "open") throw new HttpError(409, "huddle is closed");

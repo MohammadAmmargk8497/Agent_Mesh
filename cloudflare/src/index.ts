@@ -181,22 +181,38 @@ export class Room extends DurableObject<Env> {
 
     try {
       // Viewer snapshots never enter agent helpers, mutation paths, or WebSocket handling.
-      if (agent === "viewer") {
-        if (path !== "/v1/transcript" || method !== "GET") return error("viewer is read-only", 403);
+      const dashboardState = path === "/v1/dashboard/state" && method === "GET";
+      if (agent === "viewer" || dashboardState) {
+        if (agent === "viewer" && (path !== "/v1/transcript" || method !== "GET")) return error("viewer is read-only", 403);
+        if (agent !== "viewer" && !AGENTS.includes(agent)) return error("invalid agent context", 401);
         const rawAfter = url.searchParams.get("after");
         const after = Number(rawAfter ?? 0);
         if ((rawAfter !== null && !/^-?\d+$/.test(rawAfter)) || !Number.isSafeInteger(after))
           return error("after must be an integer");
-        const events = this.sql("SELECT * FROM events WHERE id>? ORDER BY id ASC LIMIT 200", after).toArray();
+        const events = dashboardState
+          ? this.sql("SELECT * FROM events WHERE recipient=? AND id>? ORDER BY id ASC LIMIT 200", agent, after).toArray()
+          : this.sql("SELECT * FROM events WHERE id>? ORDER BY id ASC LIMIT 200", after).toArray();
+        const tasks = (dashboardState
+          ? this.sql("SELECT * FROM tasks WHERE created_by=? OR assignee=? OR (status='open' AND EXISTS (SELECT 1 FROM dashboard_tasks WHERE task_id=tasks.id AND state='open')) ORDER BY created_at DESC LIMIT 200", agent, agent)
+          : this.sql("SELECT * FROM tasks ORDER BY created_at DESC LIMIT 200")).toArray().reverse().map((r: any) => {
+            const task = this.coordination.parseTask(r);
+            if (dashboardState) task.dashboard_status = this.coordination.dashboardStatus(task);
+            return task;
+          });
+        const snapshot = this.coordination.snapshot(Date.now(), agent === "viewer" ? undefined : agent);
         return json({
-          messages: this.sql("SELECT * FROM messages ORDER BY created_at DESC LIMIT 500").toArray().reverse(),
-          tasks: this.sql("SELECT * FROM tasks ORDER BY created_at DESC LIMIT 200").toArray().reverse()
-            .map((r: any) => this.coordination.parseTask(r)),
+          messages: (dashboardState
+            ? this.sql("SELECT * FROM messages WHERE sender=? OR recipient=? ORDER BY created_at DESC LIMIT 500", agent, agent)
+            : this.sql("SELECT * FROM messages ORDER BY created_at DESC LIMIT 500")).toArray().reverse(),
+          tasks,
           patches: this.sql("SELECT id, sender, title, task_id, created_at, length(text) AS size FROM patches ORDER BY created_at DESC LIMIT 50").toArray().reverse(),
-          audit: this.sql("SELECT * FROM audit ORDER BY id DESC LIMIT 200").toArray().reverse(),
+          audit: (dashboardState
+            ? this.sql("SELECT * FROM audit WHERE actor=? ORDER BY id DESC LIMIT 200", agent)
+            : this.sql("SELECT * FROM audit ORDER BY id DESC LIMIT 200")).toArray().reverse(),
           events,
           last_event_id: events.length ? events[events.length - 1].id : after,
-          ...this.coordination.snapshot(Date.now()),
+          ...snapshot,
+          ...(dashboardState ? { me: agent } : {}),
         });
       }
       if (!AGENTS.includes(agent)) return error("invalid agent context", 401);

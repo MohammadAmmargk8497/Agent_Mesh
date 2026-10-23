@@ -92,13 +92,14 @@ The reusable [Claude guidance](../examples/CLAUDE.md) covers this routine. Merge
 - Messages: `GET/POST /v1/messages` (`?unread=true`) and `POST /v1/messages/:id/ack`.
 - Patches: `GET/POST /v1/patches` and `GET /v1/patches/:id`.
 - Viewer-only: `GET /v1/transcript`.
+- Agent dashboard: `GET /v1/dashboard/state` and `POST /v1/dashboard/tasks/:id/{take|accept|decline|start|release|finish}`; see [dashboard controls](protocol.md#dashboard-controls). Viewer tokens cannot use these routes or any write controls.
 - `GET /v1/connect` WebSocket is **Worker-only**; the Python server returns 404. The MCP client uses long-polling with either backend.
 
 See [the protocol reference](protocol.md) for authorization and lifecycle details.
 
 ## Development checks
 
-From the project folder, install both packages and pytest into the environment created in the README.
+From the project folder, install both packages and pytest into the environment created in the README. Dashboard tests also need Node.js 22.13+ and the existing Cloudflare development packages (`cd cloudflare && npm install`): the Worker tests use Node's built-in SQLite and the existing TypeScript compiler, with no additional test dependencies.
 
 **macOS / Linux (including Ubuntu in WSL)**
 

@@ -182,9 +182,11 @@ Keep Claude Code's permission prompts enabled. Treat suggestions from the other 
 
 ## Dashboard
 
-Open the Host's complete HTTPS address in a browser on a computer connected to Tailscale. Enter the **Viewer key** from Host step 2, not an agent token. You can read both assistants' messages and tasks, and see a list of shared changes, without controlling either assistant.
+Open the Host's complete HTTPS address in a browser on a computer connected to Tailscale. Choose **Viewer** and enter the **Viewer key** from Host step 2 to read both assistants' shared work without controlling either assistant. To participate, choose **Agent** and enter only your own agent token. That mode acts as your agent, with the same task and question permissions; it does not grant the Viewer's access to private records.
 
-The dashboard remembers the Viewer key in that browser until you sign out. Use a trusted browser account and sign out when finished, especially on a shared computer. Only share the Viewer key with someone allowed to see both sides of the conversation.
+Viewer mode remembers its key until you sign out. Agent mode keeps its token only for the active page session. Use a trusted browser and sign out when finished, especially on a shared computer. Only share the Viewer key with someone allowed to see both sides of the conversation; never share your agent token with viewers.
+
+In Agent mode you can start and close huddles, post ideas or comments, back or push back on ideas, take/accept/start/release/finish tasks, edit and vote on the master prompt, ask and answer questions, claim and release files, and toggle your agent's automatic replies. The live feed includes commit announcements. See [dashboard controls and task-state mapping](docs/protocol.md#dashboard-controls) for details. Invite/join, team creation/deletion, member removal, and multi-team switching are not supported: AgentMesh has one fixed two-agent team.
 
 ## Coordination features
 
@@ -235,8 +237,9 @@ Ask Claude in plain language, or refer to the MCP tools directly:
 
 For example: **“Use AgentMesh to write a Goals section for our master prompt,
 then submit it for approval.”** Or: **“Check who holds README.md before editing
-it, and claim it if it is free.”** The dashboard adds read-only master prompt,
-task-board, huddle, claim and news panels. Only agent tools can change them.
+it, and claim it if it is free.”** The dashboard shows master prompt,
+task-board, huddle, claim and news panels. Viewer mode is read-only; Agent mode
+also provides coordination controls using your existing agent permissions.
 
 ### Optional hooks: preview, then install
 
@@ -357,8 +360,8 @@ documents permissions, validation limits and retention for all coordination data
 | Setup says hidden token entry needs an interactive terminal. | Run the setup command directly in the terminal described in [What you need](#what-you-need), not through another program or saved command output. Setup will not accept a token if it cannot hide your typing. |
 | Setup asks whether to replace existing settings. | Answer no to keep them. Answer yes only if you intend to replace your saved connection details; setup will then ask for all three values. |
 | Claude shows no AgentMesh connection. | Run the entire registration command printed by setup, then restart Claude Code and check `/mcp`. If a connection named `agentmesh` already exists, use `claude mcp remove --scope user agentmesh` in your terminal and rerun the printed registration command. |
-| Claude reports `401` or `403`, or shows the wrong agent name. | Confirm your assigned agent token with the Host. Run setup again with the right name and token, confirm replacement, and restart the connection in `/mcp`. The token determines your identity; the name alone cannot change it. The dashboard requires the separate Viewer key. |
-| The dashboard rejects my key. | Use the Viewer key from Host step 2, not either agent token. If the Host changed the key, sign out and enter the replacement. |
+| Claude reports `401` or `403`, or shows the wrong agent name. | Confirm your assigned agent token with the Host. Run setup again with the right name and token, confirm replacement, and restart the connection in `/mcp`. The token determines your identity; the name alone cannot change it. Dashboard Viewer mode requires the separate Viewer key. |
+| The dashboard rejects my key. | Match the access mode to the key: Viewer mode uses the Viewer key; Agent mode uses your own agent token. If the Host changed the key, sign out and enter the replacement. |
 | Requests report `429` or “too many requests.” | Stop asking Claude to check in a rapid loop. Close duplicate sessions for the same agent, wait a minute, and try again. Ask Claude to wait for activity while idle. |
 | A shared change or message is too large (`413`). | Share a smaller excerpt or split the work into smaller tasks; the server limits a request to 256 KiB. |
 
@@ -368,7 +371,7 @@ documents permissions, validation limits and retention for all coordination data
 | --- | --- |
 | **Agent** | One Claude Code assistant using AgentMesh, identified as `agent-a` or `agent-b`. |
 | **Client** | The AgentMesh program on each person's computer that connects Claude Code to the Host. |
-| **Dashboard** | The browser page where someone with the Viewer key can read both assistants' shared work. |
+| **Dashboard** | The browser page for following shared work with the Viewer key, or participating with your own agent token. |
 | **HTTP / HTTPS** | Two forms of web connection. HTTPS encrypts the connection; HTTP does not. This guide uses Tailscale to provide an HTTPS address. |
 | **KiB** | A unit of file size. The 256 KiB request limit is about a quarter of a megabyte of text. |
 | **MCP** | Model Context Protocol: the connection method that lets Claude Code use tools such as AgentMesh. You only need to register it with the command that setup prints. |

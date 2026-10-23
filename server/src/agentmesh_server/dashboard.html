@@ -27,7 +27,7 @@
     *{box-sizing:border-box}
     [hidden]{display:none!important}
     body{margin:0;background:var(--bg);color:var(--text);font:14px/1.6 Inter,sans-serif}
-    button,input{font:inherit}
+    button,input,textarea,select{font:inherit}
     button{cursor:pointer;background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:8px 13px}
     button:hover{border-color:var(--dim)}
     :focus-visible{outline:2px solid var(--cyan);outline-offset:3px}
@@ -147,6 +147,19 @@
     .auth input{width:100%;background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:7px;padding:11px 12px}
     .auth button{width:100%;margin-top:14px;background:var(--text);color:var(--bg);border-color:var(--text)}
     .auth .auth-error{color:var(--orange);font-size:12px}
+    input,textarea,select{max-width:100%;background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:7px;padding:8px 10px}
+    textarea{resize:vertical;min-height:80px}
+    button:disabled,input:disabled,textarea:disabled,select:disabled{opacity:.55;cursor:not-allowed}
+    .compose{display:grid;gap:10px;padding:14px 18px;border-top:1px solid var(--line-soft)}
+    .huddle .compose,.task-card .compose,.item .compose,.prompt-section .compose{padding:12px 0 0;margin-top:10px}
+    .compose h3,.compose h4{font-size:13px;margin:0}
+    .field{display:grid;gap:5px;min-width:0;font-size:12px}
+    .field input,.field textarea,.field select{width:100%}
+    .write-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px}
+    .write-actions button{font-size:12px;padding:6px 10px}
+    .action-status{margin:12px 0;padding:10px 14px;border:1px solid var(--line);border-radius:8px;color:var(--cyan);overflow-wrap:anywhere;white-space:pre-wrap}
+    .action-status.error{color:var(--orange);border-color:var(--orange)}
+    .setting{display:flex;gap:7px;align-items:center;font-size:12px;margin-top:10px}
     .footer{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;color:var(--dim);margin-top:17px;font-size:10px}
     @container(max-width:860px){.board{grid-template-columns:repeat(2,minmax(0,1fr))}}
     @container(max-width:460px){.board{grid-template-columns:1fr}}
@@ -197,7 +210,7 @@
         <svg class="brand-mark" viewBox="0 0 48 48" fill="none" aria-hidden="true"><path d="M12 12 36 24 12 36Z" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="12" r="5" fill="currentColor"/><circle cx="36" cy="24" r="5" fill="currentColor"/><circle cx="12" cy="36" r="5" fill="currentColor"/></svg>
         <div><div class="eyebrow">AgentMesh / Shared workspace</div>
         <h1>A conversation in motion.</h1>
-        <p class="subtitle">Two agents. One shared workspace. A read-only view.</p></div>
+        <p id="access-description" class="subtitle">Two agents. One shared workspace. A read-only view.</p></div>
       </div>
       <div class="actions">
         <button id="theme-toggle" type="button">Dark theme</button>
@@ -210,19 +223,22 @@
       <span class="meta">Last updated <time id="last-updated">—</time></span>
     </div>
     <section id="auth" class="auth" aria-labelledby="auth-title">
-      <div class="eyebrow">Read-only access</div>
+      <div class="eyebrow">Workspace access</div>
       <h2 id="auth-title">Take a seat.</h2>
-      <p>Enter the viewer key to follow the live transcript. The key stays in this browser until you sign out.</p>
+      <p>Use a viewer key to follow along, or an agent bearer token to participate as that agent. The key stays in this browser until you sign out.</p>
       <form id="viewer-form">
-        <label for="viewer-key">Viewer key</label>
+        <label for="access-mode">Access mode</label>
+        <select id="access-mode"><option value="viewer">Viewer · read-only</option><option value="agent">Agent · participate</option></select>
+        <label for="viewer-key">Viewer key or agent token</label>
         <input id="viewer-key" name="viewer-key" type="password" required minlength="32" autocomplete="off" spellcheck="false" aria-describedby="auth-error">
         <p id="auth-error" class="auth-error" role="alert" hidden></p>
-        <button type="submit">Open live transcript</button>
+        <button type="submit">Open dashboard</button>
       </form>
     </section>
+    <p id="action-status" class="action-status" role="status" aria-live="polite" hidden></p>
     <section id="asks" class="asks" aria-labelledby="asks-title" hidden>
       <h2 id="asks-title">Waiting on the team</h2><ul id="asks-list"></ul>
-      <p class="hint">Your agents handle questions, ideas and votes from their own sessions. This dashboard is read-only.</p>
+      <p id="asks-hint" class="hint">Your agents handle questions, ideas and votes from their own sessions. This dashboard is read-only.</p>
     </section>
     <main id="workspace" class="workspace" hidden>
       <aside class="col col-team" aria-label="Team and coordination">
@@ -236,10 +252,12 @@
         <section class="panel panel-claims" aria-labelledby="claims-title">
           <div class="panel-heading"><div><div class="panel-label">30-minute reservations</div><h2 id="claims-title">File claims</h2></div><span id="claim-count" class="count">0</span></div>
           <div id="claims" class="items" tabindex="0" aria-label="Active file claims"></div>
+          <div id="claim-create" hidden></div>
         </section>
         <section class="panel panel-questions" aria-labelledby="questions-title">
           <div class="panel-heading"><h2 id="questions-title">Questions</h2><span id="question-count" class="count">0</span></div>
           <div id="questions" class="items" tabindex="0" aria-label="Questions and answers"></div>
+          <div id="question-create" hidden></div>
         </section>
       </aside>
       <div id="coordination" class="col col-work" aria-label="Project coordination" hidden>
@@ -249,7 +267,7 @@
         </section>
         <section class="panel panel-huddles" aria-labelledby="huddles-title">
           <div class="panel-heading"><div><div class="panel-label">Ideas · feedback · decisions</div><h2 id="huddles-title">Huddles</h2></div><span id="huddle-count" class="count">0</span></div>
-          <div id="huddles" class="items"><div id="huddle-list"></div><div id="huddle-view" hidden></div></div>
+          <div id="huddles"><div id="huddle-create" hidden></div><div class="items"><div id="huddle-list"></div><div id="huddle-view" hidden></div></div></div>
         </section>
         <section class="panel panel-prompt" aria-labelledby="master-title">
           <div class="panel-heading"><div><div class="panel-label">Shared project description</div><h2 id="master-title">Master prompt</h2></div><span id="prompt-badge" class="badge">Draft</span></div>
@@ -276,7 +294,7 @@
         </section>
       </aside>
     </main>
-    <footer class="footer"><span>Read-only · Full snapshots every 4 seconds</span><span>Latest 500 messages / 200 tasks / 50 patches · retention applies</span></footer>
+    <footer class="footer"><span id="access-footer">Read-only · Full snapshots every 4 seconds</span><span>Latest 500 messages / 200 tasks / 50 patches · retention applies</span></footer>
   </div>
   <script nonce="__AGENTMESH_NONCE__">
     (() => {
@@ -305,6 +323,8 @@
       const empty = (container, text) => container.append(element("p", "empty", text));
       let key = "", lastEventId = 0, session = 0, timer = null, controller = null;
       let rendered = {}, snapshot = null, selectedHuddle = null;
+      let accessMode = "viewer", me = null, writing = false, writeController = null;
+      const drafts = new Map(), editingSections = new Set();
       const agents = ["agent-a", "agent-b"];
       const shortId = (value) => String(value || "—").slice(0, 8);
       const words = (value) => String(value || "").replaceAll("_", " ");
@@ -325,17 +345,148 @@
         const task = snapshot && snapshot.tasks.find((row) => row.id === id);
         return shortId(id) + (task ? " · " + task.title : "");
       };
+      const canWrite = () => accessMode === "agent" && agents.includes(me) && Boolean(key);
+      const routeId = (id) => encodeURIComponent(id);
+      const fieldId = (kind, id) => kind + "-" + encodeURIComponent(id);
+      function actionStatus(message = "", error = false) {
+        get("action-status").textContent = message;
+        get("action-status").className = "action-status" + (error ? " error" : "");
+        get("action-status").hidden = !message;
+      }
+      function syncWriteControls() {
+        for (const node of document.querySelectorAll("[data-write]")) node.disabled = writing || node.dataset.unavailable === "true";
+      }
+      function captureDrafts(root) {
+        for (const node of root.querySelectorAll("[data-draft]")) if (node.dataset.draft === "true") drafts.set(node.id, node.value);
+      }
+      function inputField(id, label, options = {}) {
+        const wrapper = element("label", "field", label);
+        wrapper.setAttribute("for", id);
+        const node = element(options.choices ? "select" : options.multiline ? "textarea" : "input");
+        node.id = id;
+        node.dataset.draft = "true";
+        node.dataset.focus = "field:" + id;
+        node.dataset.write = "true";
+        if (options.choices) for (const [value, text] of options.choices) {
+          const choice = element("option", "", text);
+          choice.value = value;
+          choice.setAttribute("value", value);
+          node.append(choice);
+        }
+        else if (!options.multiline) node.type = "text";
+        node.value = drafts.has(id) ? drafts.get(id) : options.value || "";
+        if (options.required !== false) node.required = true;
+        node.setAttribute("maxlength", String(options.max || 8000));
+        if (options.multiline) node.setAttribute("rows", String(options.rows || 3));
+        if (options.placeholder) node.setAttribute("placeholder", options.placeholder);
+        for (const event of ["input", "change"]) node.addEventListener(event, () => drafts.set(id, node.value));
+        node.disabled = writing;
+        wrapper.append(node);
+        return wrapper;
+      }
+      function textValue(id, label, required = true) {
+        const value = get(id).value.trim();
+        if (required && !value) throw new Error(label + " is required.");
+        return value;
+      }
+      function optional(body, property, id) {
+        const value = textValue(id, property, false);
+        if (value) body[property] = value;
+        return body;
+      }
+      function guard(action) {
+        return () => {
+          if (!canWrite() || writing) return;
+          try { action(); } catch (error) { actionStatus(error.message || "Action failed.", true); }
+        };
+      }
+      function actionButton(label, path, action, callback, unavailable = false) {
+        const button = element("button", "", label);
+        button.type = "button";
+        button.dataset.route = path;
+        button.dataset.action = action;
+        button.dataset.focus = action + ":" + path;
+        button.dataset.write = "true";
+        button.dataset.unavailable = String(unavailable);
+        button.disabled = writing || unavailable;
+        button.addEventListener("click", guard(callback));
+        return button;
+      }
+      function writeForm(id, title, fields, label, path, action, submit) {
+        const form = element("form", "compose");
+        form.id = id;
+        form.dataset.route = path;
+        if (title) form.append(element("h4", "", title));
+        form.append(...fields);
+        const button = actionButton(label, path, action, () => {});
+        button.type = "submit";
+        form.append(button);
+        form.addEventListener("submit", (event) => {
+          event.preventDefault();
+          guard(submit)();
+        });
+        return form;
+      }
+      async function mutate(path, body, message, clearFields = [], onSuccess = null) {
+        if (!canWrite() || writing) return;
+        const currentSession = session, requestController = new AbortController();
+        writing = true;
+        writeController = requestController;
+        syncWriteControls();
+        actionStatus("Saving…");
+        try {
+          const response = await fetch(path, {
+            method: "POST", headers: { Authorization: "Bearer " + key, "Content-Type": "application/json" },
+            body: JSON.stringify(body), cache: "no-store", signal: requestController.signal
+          });
+          if (session !== currentSession) return;
+          let data = null;
+          try { data = await response.json(); } catch {}
+          if (session !== currentSession) return;
+          if (response.status === 401) {
+            showAuth("The agent token was rejected. Enter a valid agent token to reconnect.", true);
+            return;
+          }
+          if (!response.ok) throw new Error(typeof data?.error === "string" ? data.error : "Action failed (" + response.status + ").");
+          for (const id of clearFields) {
+            drafts.delete(id);
+            const field = get(id);
+            if (field) { field.value = ""; field.dataset.draft = "cleared"; }
+          }
+          if (onSuccess) onSuccess();
+          for (const name of ["tasks", "huddles", "master_prompt", "claims", "questions"]) delete rendered[name];
+          actionStatus(message);
+          // A pre-write snapshot must not overwrite the just-completed action.
+          if (controller) controller.abort();
+          controller = null;
+          await poll(true);
+        } catch (error) {
+          if (session === currentSession && !requestController.signal.aborted) actionStatus(error.message || "Action failed. Try again.", true);
+        } finally {
+          if (session === currentSession) {
+            writing = false;
+            if (writeController === requestController) writeController = null;
+            syncWriteControls();
+          }
+        }
+      }
       // Keep disclosure, keyboard focus and scroll position through live snapshots.
       function preserveView(id, render) {
         const root = get(id), top = root.scrollTop;
+        captureDrafts(root);
         const opened = new Set(Array.from(root.querySelectorAll("details[open]")).map((node) => node.dataset.id));
-        const active = root.contains(document.activeElement) ? document.activeElement.dataset.focus : null;
+        const focused = root.contains(document.activeElement) ? document.activeElement : null;
+        const active = focused ? focused.dataset.focus : null;
+        const selection = focused ? [focused.selectionStart, focused.selectionEnd] : [];
         render();
         for (const node of root.querySelectorAll("details")) node.open = opened.has(node.dataset.id);
         root.scrollTop = top;
         if (active) {
           const target = Array.from(root.querySelectorAll("[data-focus]")).find((node) => node.dataset.focus === active);
-          if (target) target.focus({ preventScroll: true });
+          if (target) {
+            target.focus({ preventScroll: true });
+            if (typeof target.setSelectionRange === "function" && Number.isInteger(selection[0])) target.setSelectionRange(...selection);
+          }
         }
       }
 
@@ -358,7 +509,13 @@
         timer = null;
         if (controller) controller.abort();
         controller = null;
+        if (writeController) writeController.abort();
+        writeController = null;
+        writing = false;
         key = "";
+        me = null;
+        drafts.clear();
+        editingSections.clear();
         lastEventId = 0;
         rendered = {};
         snapshot = null;
@@ -367,6 +524,8 @@
       function showAuth(message = "", focus = false) {
         stopSession();
         storage.remove("agentmesh-viewer");
+        storage.remove("agentmesh-access-mode");
+        actionStatus();
         get("viewer-key").value = "";
         get("workspace").hidden = true;
         get("coordination").hidden = true;
@@ -377,7 +536,10 @@
         get("auth-error").hidden = !message;
         get("last-updated").textContent = "—";
         get("last-updated").removeAttribute("datetime");
-        for (const id of ["messages", "tasks", "patches", "audit", "master", "huddle-list", "huddle-view", "claims", "questions", "news", "members", "rules", "asks-list"]) get(id).replaceChildren();
+        for (const id of ["messages", "tasks", "patches", "audit", "master", "huddle-create", "huddle-list", "huddle-view", "claim-create", "question-create", "claims", "questions", "news", "members", "rules", "asks-list"]) get(id).replaceChildren();
+        for (const id of ["huddle-create", "claim-create", "question-create"]) get(id).hidden = true;
+        get("access-description").textContent = "Two agents. One shared workspace. A read-only view.";
+        get("access-footer").textContent = "Read-only · Full snapshots every 4 seconds";
         get("huddle-list").hidden = false;
         get("huddle-view").hidden = true;
         get("prompt-badge").textContent = "Draft";
@@ -411,7 +573,13 @@
         const container = get("tasks");
         const fragment = document.createDocumentFragment();
         const completed = rows.filter((row) => ["done", "accepted"].includes(row.status)).length;
-        const columns = [
+        const taskStatus = (row) => row.dashboard_status || row.status;
+        const columns = canWrite() ? [
+          ["Proposed / open", (row) => ["proposed", "open"].includes(taskStatus(row))],
+          ["Assigned", (row) => taskStatus(row) === "assigned"],
+          ["In progress / blocked", (row) => ["in_progress", "blocked"].includes(taskStatus(row))],
+          ["Done / closed", (row) => ["done", "accepted", "cancelled"].includes(taskStatus(row))]
+        ] : [
           ["Proposed / open", (row) => !["in_progress", "blocked", "done", "accepted", "cancelled"].includes(row.status)],
           ["In progress", (row) => row.status === "in_progress"],
           ["Blocked", (row) => row.status === "blocked"],
@@ -428,7 +596,7 @@
           const card = element("article", "task-card" + (row.assignee === "agent-b" ? " from-b" : "") + (done ? " is-done" : ""));
           const heading = element("div", "item-heading");
           const state = row.status === "blocked" ? " blocked" : ["open", "in_progress"].includes(row.status) ? " active" : "";
-          heading.append(element("span", "meta", shortId(row.id)), element("span", "badge" + state, words(row.status)));
+          heading.append(element("span", "meta", shortId(row.id)), element("span", "badge" + state, words(taskStatus(row))));
           card.append(heading, element("h4", "item-title", row.title), element("div", "meta " + agentClass(row.assignee), row.created_by + " → " + row.assignee));
           card.append(element("div", "meta", "Owner: " + (row.owner || row.assignee || "—")));
           if (row.contract) card.append(element("span", "badge active", "Contract / skeleton"));
@@ -455,6 +623,30 @@
           body.append(element("div", "meta", "Task " + row.id), element("div", "meta", "Created " + timestamp(row.created_at)), element("div", "meta", "Updated " + timestamp(row.updated_at)));
           details.append(body);
           card.append(details);
+          if (canWrite()) {
+            const actions = element("div", "write-actions");
+            const status = taskStatus(row), mine = row.assignee === me;
+            const taskAction = (action, label) => {
+              const path = "/v1/dashboard/tasks/" + routeId(row.id) + "/" + action;
+              actions.append(actionButton(label, path, "task-" + action, () => mutate(path, {}, "Task " + words(action) + " saved.")));
+            };
+            if (status === "proposed" && mine) { taskAction("accept", "Accept"); taskAction("decline", "Decline"); }
+            else if (["open", "proposed"].includes(status)) taskAction("take", "Take it");
+            if (status === "assigned" && mine) {
+              if (!(row.waiting_on || []).length) taskAction("start", "Start");
+              taskAction("release", "Release");
+            }
+            if (status === "in_progress" && mine) taskAction("release", "Release");
+            if (row.created_by === me && ["done", "blocked"].includes(row.status)) {
+              const path = "/v1/tasks/" + routeId(row.id) + "/review";
+              for (const [decision, label] of [["accept", "Accept result"], ["reopen", "Reopen"]]) actions.append(actionButton(label, path, "task-review-" + decision, () => mutate(path, { decision }, "Task review saved.")));
+            }
+            if (actions.childElementCount) card.append(actions);
+            if (status === "in_progress" && mine) {
+              const id = fieldId("task-finish-summary", row.id), path = "/v1/dashboard/tasks/" + routeId(row.id) + "/finish";
+              card.append(writeForm(fieldId("task-finish-form", row.id), "Finish task", [inputField(id, "Summary (optional)", { multiline: true, required: false })], "Mark done", path, "task-finish", () => mutate(path, optional({}, "summary", id), "Task completed.", [id])));
+            }
+          }
           column.append(card);
           }
           if (!items.length) empty(column, "Nothing here");
@@ -505,8 +697,8 @@
         badge.className = "badge" + (state.status === "locked" ? " active" : state.status === "voting" ? " blocked" : "");
         const status = element("div", "prompt-bar");
         const guidance = state.status === "locked" ? "Approved by both agents. The lead can turn this into the task plan."
-          : state.status === "voting" ? "Both agents must approve this revision. Votes are submitted from their own sessions."
-          : "A shared project description, written by your agents. Once it reads right, they can submit it for approval.";
+          : state.status === "voting" ? "Both agents must approve this revision. Agent access can approve or reject below."
+          : "A shared project description. Edit a section, then submit it for both agents to approve.";
         status.append(element("p", "hint", guidance));
         status.append(element("div", "meta", "Revision " + (state.revision || 0) + " · locked v" + (state.locked_version || 0) + " · round " + (state.round || 0)));
         status.append(element("div", "meta", "Lead: " + (state.lead || "Nobody yet")));
@@ -520,6 +712,22 @@
           votes.append(box);
         }
         status.append(votes);
+        if (canWrite()) {
+          if ((state.status || "draft") === "draft") {
+            const path = "/v1/master/submit";
+            const actions = element("div", "write-actions");
+            actions.append(actionButton("Submit for vote", path, "master-submit", () => mutate(path, {}, "Master prompt submitted for vote."), !(master.sections || []).length));
+            status.append(actions);
+          }
+          if (state.status === "locked") status.append(element("p", "hint", "Editing starts a new draft that needs another vote. The locked version remains recorded."));
+          if (state.status === "voting") {
+            const path = "/v1/master/vote", noteId = "master-vote-note";
+            status.append(inputField(noteId, "Vote comment (optional)", { max: 500, required: false }));
+            const actions = element("div", "write-actions");
+            for (const [decision, label] of [["approve", "Approve"], ["reject", "Reject"]]) actions.append(actionButton(label, path, "master-" + decision, () => mutate(path, optional({ decision }, "note", noteId), "Master prompt vote saved.", [noteId])));
+            status.append(actions);
+          }
+        }
         fragment.append(status);
         const sections = element("div", "sections");
         for (const row of master.sections || []) {
@@ -527,7 +735,30 @@
           card.append(element("h3", "item-title", row.section), element("p", "description", row.text));
           card.append(element("div", "meta " + agentClass(row.author), row.author + " · revision " + row.revision + " · " + timestamp(row.created_at)));
           card.append(element("div", "meta", "SHA-256: " + row.sha256));
+          if (canWrite() && state.status !== "voting") {
+            const path = "/v1/master/sections", textId = fieldId("master-section-text", row.section);
+            if (editingSections.has(row.section)) {
+              const editor = writeForm(fieldId("master-edit", row.section), "Edit " + row.section, [inputField(textId, "Section text", { multiline: true, value: row.text, rows: 5 })], "Save section", path, "master-save", () => mutate(path, { section: row.section, text: textValue(textId, "Section text") }, "Section saved.", [textId], () => editingSections.delete(row.section)));
+              const cancel = actionButton("Cancel", path, "master-cancel", () => {
+                editingSections.delete(row.section);
+                drafts.delete(textId);
+                renderMaster(snapshot.master_prompt);
+              });
+              editor.append(cancel);
+              card.append(editor);
+            } else card.append(actionButton("Edit", path, "master-edit", () => {
+              captureDrafts(get("master"));
+              editingSections.add(row.section);
+              renderMaster(snapshot.master_prompt);
+              get(textId).focus({ preventScroll: true });
+            }));
+          }
           sections.append(card);
+        }
+        if (canWrite() && state.status !== "voting") {
+          const path = "/v1/master/sections", nameId = "master-section-name", textId = "master-section-new-text";
+          const form = writeForm("master-new-section-form", "Add a section", [inputField(nameId, "Section name", { max: 80 }), inputField(textId, "Section text", { multiline: true })], "Save new section", path, "master-create", () => mutate(path, { section: textValue(nameId, "Section name"), text: textValue(textId, "Section text") }, "Section saved.", [nameId, textId]));
+          sections.append(form);
         }
         if ((master.edits || []).length) {
           const history = element("details", "prompt-history");
@@ -558,7 +789,7 @@
         const ideaPosts = posts.filter((post) => post.kind === "idea");
         const ideaNumbers = new Map(ideaPosts.map((post, index) => [post.id, index + 1]));
         if (row.status === "open") {
-          const waiting = row.waiting_on || [];
+          const waiting = row.dashboard_waiting_on || row.waiting_on || [];
           card.append(element("p", "huddle-wait" + (waiting.length ? "" : " complete"), waiting.length ? "Waiting on: " + waiting.join(", ") : "Everyone has weighed in. The owner can close this with a decision."));
         }
         const ideas = element("ol", "ideas");
@@ -569,14 +800,25 @@
           const replies = posts.filter((reply) => reply.ref_post_id === post.id);
           const backing = replies.filter((reply) => reply.kind === "back");
           const pushback = replies.filter((reply) => reply.kind === "push_back");
+          const ideaVotes = (row.votes || []).filter((vote) => vote.ref_post_id === post.id);
+          const ups = ideaVotes.filter((vote) => vote.vote === "up"), downs = ideaVotes.filter((vote) => vote.vote === "down");
           const score = element("span", "score");
-          const up = element("span", "backing", "Back it +" + backing.length);
-          up.title = backing.length ? backing.map((reply) => reply.author + ": " + reply.text).join("\n") : "No backing yet";
-          const down = element("span", "pushback", "Push back −" + pushback.length);
-          down.title = pushback.length ? pushback.map((reply) => reply.author + ": " + reply.text).join("\n") : "No pushback yet";
+          const up = element("span", "backing", "Back it +" + (backing.length + ups.length));
+          up.title = [...backing.map((reply) => reply.author + ": " + reply.text), ...ups.map((vote) => vote.agent + (vote.note ? ": " + vote.note : ""))].join("\n") || "No backing yet";
+          const down = element("span", "pushback", "Push back −" + (pushback.length + downs.length));
+          down.title = [...pushback.map((reply) => reply.author + ": " + reply.text), ...downs.map((vote) => vote.agent + (vote.note ? ": " + vote.note : ""))].join("\n") || "No pushback yet";
           score.append(up, down);
           top.append(score);
           item.append(top, element("p", "", post.text));
+          if (canWrite() && row.status === "open" && post.author !== me) {
+            const path = "/v1/huddles/" + routeId(row.id) + "/votes", noteId = fieldId("huddle-vote-note", post.id);
+            item.append(inputField(noteId, "Vote comment (optional)", { max: 500, required: false }));
+            const actions = element("div", "write-actions");
+            for (const [vote, label] of [["up", "Back it"], ["down", "Push back"]]) actions.append(actionButton(label, path, "huddle-vote-" + vote, () => mutate(path, optional({ ref_post_id: post.id, vote }, "note", noteId), "Huddle vote saved.", [noteId])));
+            const mine = ideaVotes.find((vote) => vote.agent === me);
+            if (mine) actions.append(element("span", "meta", "Your vote: " + (mine.vote === "up" ? "Back it" : "Push back")));
+            item.append(actions);
+          }
           ideas.append(item);
         }
         card.append(ideas);
@@ -604,6 +846,7 @@
               top.append(element("span", "meta", ideaNumber ? "on idea #" + ideaNumber : "on post " + (ref === -1 ? shortId(post.ref_post_id) : "#" + (ref + 1))));
             }
             item.append(top, element("p", "", post.text), element("div", "meta", timestamp(post.created_at)));
+            for (const vote of (row.votes || []).filter((vote) => vote.ref_post_id === post.id && vote.note)) item.append(element("p", vote.vote === "up" ? "backing" : "pushback", vote.agent + (vote.vote === "up" ? " backs it: " : " pushes back: ") + vote.note));
             talk.append(item);
           }
           if (!posts.length) empty(talk, "No posts yet.");
@@ -614,15 +857,36 @@
           button.type = "button";
           button.dataset.focus = "huddle:" + row.id;
           button.addEventListener("click", () => {
+            captureDrafts(get("huddles"));
             selectedHuddle = row.id;
             renderHuddles(snapshot.huddles);
             get("huddle-back").focus({ preventScroll: true });
           });
           card.append(button);
         }
+        if (canWrite() && row.status === "open") {
+          if (row.kind !== "standup") {
+            const path = "/v1/huddles/" + routeId(row.id) + "/posts", id = fieldId("huddle-idea-text", row.id);
+            card.append(writeForm(fieldId("huddle-idea-form", row.id), "Add an idea", [inputField(id, "Idea", { multiline: true })], "Add idea", path, "huddle-idea", () => mutate(path, { kind: "idea", text: textValue(id, "Idea") }, "Idea posted.", [id])));
+          }
+          const path = "/v1/huddles/" + routeId(row.id) + "/comments", textId = fieldId("huddle-comment-text", row.id), refId = fieldId("huddle-comment-ref", row.id);
+          const choices = [["", "Whole huddle"], ...posts.map((post, index) => [post.id, "Post #" + (index + 1) + " · " + excerpt(post.text, 65)])];
+          card.append(writeForm(fieldId("huddle-comment-form", row.id), row.kind === "standup" ? "Post an update" : "Add a comment", [inputField(textId, row.kind === "standup" ? "Update: done, next, blockers" : "Comment", { multiline: true }), inputField(refId, "Reply to (optional)", { choices, required: false })], row.kind === "standup" ? "Post update" : "Post comment", path, "huddle-comment", () => mutate(path, optional({ text: textValue(textId, "Comment") }, "ref_post_id", refId), "Comment posted.", [textId, refId])));
+          if (row.owner === me) {
+            const closePath = "/v1/huddles/" + routeId(row.id) + "/close", id = fieldId("huddle-decision", row.id);
+            card.append(writeForm(fieldId("huddle-close-form", row.id), "Close with a decision", [inputField(id, "Decision", { multiline: true })], "Close huddle", closePath, "huddle-close", () => mutate(closePath, { decision: textValue(id, "Decision") }, "Huddle closed.", [id])));
+          }
+        }
         return card;
       }
       function renderHuddles(rows) {
+        const create = get("huddle-create");
+        create.hidden = !canWrite();
+        create.replaceChildren();
+        if (canWrite()) {
+          const path = "/v1/huddles";
+          create.append(writeForm("huddle-start-form", "Start a huddle", [inputField("huddle-kind", "Kind", { choices: ["brainstorm", "design", "review", "standup"].map((kind) => [kind, words(kind)]), value: "brainstorm" }), inputField("huddle-topic", "Topic", { max: 200 })], "Start huddle", path, "huddle-start", () => mutate(path, { kind: textValue("huddle-kind", "Kind"), topic: textValue("huddle-topic", "Topic") }, "Huddle started.", ["huddle-topic"])));
+        }
         const list = get("huddle-list"), view = get("huddle-view");
         const selected = rows.find((row) => row.id === selectedHuddle);
         if (!selected) selectedHuddle = null;
@@ -637,13 +901,14 @@
           back.type = "button";
           back.dataset.focus = "huddle-back";
           back.addEventListener("click", () => {
+            captureDrafts(get("huddles"));
             const previous = selectedHuddle;
             selectedHuddle = null;
             renderHuddles(snapshot.huddles);
             const button = Array.from(list.querySelectorAll("button")).find((node) => node.dataset.focus === "huddle:" + previous);
             if (button) button.focus({ preventScroll: true });
           });
-          controls.append(back, element("span", "meta", "Read-only discussion"));
+          controls.append(back, element("span", "meta", canWrite() ? "Participating as " + me : "Read-only discussion"));
           const card = huddleCard(selected, true);
           card.querySelector("details").open = true;
           view.append(controls, card);
@@ -661,11 +926,24 @@
           card.append(element("h3", "item-title", row.path));
           card.append(element("div", "meta " + agentClass(row.agent), row.agent + " · expires " + timestamp(row.expires_at)));
           if (row.task_id) card.append(element("div", "meta", "Task " + taskRef(row.task_id)));
+          if (canWrite() && row.agent === me) {
+            const path = "/v1/claims/release";
+            card.append(actionButton("Release file", path, "claim-release", () => mutate(path, { path: row.path }, "File claim released.")));
+          }
           fragment.append(card);
         }
         container.replaceChildren(fragment);
         if (!rows.length) empty(container, "No active file claims.");
         get("claim-count").textContent = String(rows.length);
+        const create = get("claim-create");
+        create.hidden = !canWrite();
+        preserveView("claim-create", () => {
+          create.replaceChildren();
+          if (canWrite()) {
+            const path = "/v1/claims";
+            create.append(writeForm("claim-file-form", "Claim a file", [inputField("claim-path", "Repository-relative file path", { max: 500 }), inputField("claim-task", "Task (optional)", { choices: taskChoices(), required: false })], "Claim file", path, "claim-file", () => mutate(path, optional({ path: textValue("claim-path", "File path") }, "task_id", "claim-task"), "File claimed.", ["claim-path", "claim-task"])));
+          }
+        });
       }
       function renderQuestions(rows) {
         const container = get("questions");
@@ -680,11 +958,27 @@
           if (row.answer !== null && row.answer !== undefined) {
             card.append(element("h3", "item-title", "Answer · " + row.recipient), element("p", "description", row.answer), element("div", "meta", timestamp(row.answered_at)));
           }
+          if (canWrite() && !row.answered_at && row.recipient === me) {
+            const path = "/v1/questions/" + routeId(row.id) + "/answer", id = fieldId("question-answer-text", row.id);
+            card.append(writeForm(fieldId("question-answer-form", row.id), "Answer question", [inputField(id, "Answer", { multiline: true })], "Answer", path, "question-answer", () => mutate(path, { text: textValue(id, "Answer") }, "Answer posted.", [id])));
+          }
           fragment.append(card);
         }
         container.replaceChildren(fragment);
         if (!rows.length) empty(container, "No questions yet.");
         get("question-count").textContent = rows.filter((row) => !row.answered_at).length + " open · " + rows.length + " total";
+        const create = get("question-create");
+        create.hidden = !canWrite();
+        preserveView("question-create", () => {
+          create.replaceChildren();
+          if (canWrite()) {
+            const path = "/v1/questions", other = agents.find((agent) => agent !== me);
+            create.append(writeForm("question-ask-form", "Ask a question", [inputField("question-to", "To", { choices: [[other, other]], value: other }), inputField("question-text", "Question", { multiline: true }), inputField("question-task", "Task (optional)", { choices: taskChoices(), required: false })], "Ask question", path, "question-ask", () => mutate(path, optional({ to: textValue("question-to", "Recipient"), text: textValue("question-text", "Question") }, "task_id", "question-task"), "Question asked.", ["question-text", "question-task"])));
+          }
+        });
+      }
+      function taskChoices() {
+        return [["", "No task"], ...(snapshot ? snapshot.tasks : []).map((task) => [task.id, shortId(task.id) + " · " + excerpt(task.title, 60)])];
       }
       function renderTeam(data) {
         const container = get("members");
@@ -697,6 +991,31 @@
           name.append(element("strong", agentClass(agent), agent));
           if ((data.master_prompt.state || {}).lead === agent) name.append(element("span", "badge", "lead"));
           main.append(name);
+          const settings = (data.member_settings || []).find((row) => row.agent === agent);
+          if (settings) main.append(element("p", "meta", "Auto respond: " + (settings.auto_respond ? "on" : "off")));
+          if (canWrite() && agent === me) {
+            name.append(element("span", "badge active", "you"));
+            const label = element("label", "setting"), toggle = element("input");
+            toggle.id = "auto-respond";
+            toggle.type = "checkbox";
+            toggle.checked = settings ? settings.auto_respond : true;
+            toggle.dataset.write = "true";
+            toggle.dataset.route = "/v1/settings";
+            toggle.dataset.action = "settings-auto-respond";
+            toggle.dataset.focus = "auto-respond";
+            toggle.disabled = writing;
+            toggle.addEventListener("change", guard(() => {
+              const currentSession = session;
+              mutate("/v1/settings", { auto_respond: toggle.checked }, "Auto respond setting saved.").then(() => {
+                if (session === currentSession && snapshot) {
+                  const current = (snapshot.member_settings || []).find((row) => row.agent === me);
+                  toggle.checked = current ? current.auto_respond : true;
+                }
+              });
+            }));
+            label.append(toggle, element("span", "", "Auto respond"));
+            main.append(label);
+          }
           const current = data.tasks.filter((row) => (row.owner === agent || row.assignee === agent) && ["in_progress", "blocked"].includes(row.status));
           for (const task of current.slice(0, 1)) main.append(element("p", "", words(task.status) + ": " + excerpt(task.title, 120)));
           if (current.length > 1) main.append(element("p", "hint", "+" + (current.length - 1) + " more active tasks on the board"));
@@ -728,7 +1047,7 @@
           ["Tasks", "Agent-owned work, with dependency and contract / skeleton tracking"],
           ["Master prompt", "Both agents approve before the prompt is locked"],
           ["File holds", "Shared coordination claims, expiring after 30 minutes"],
-          ["Dashboard", "Viewer-key access; no edits, invites or agent credentials"]
+          ["Dashboard", canWrite() ? "Authenticated as " + me + "; actions use this agent's permissions" : "Viewer-key access; read-only. Agent tokens enable participation."]
         ]) {
           const row = element("div", "rule");
           row.append(element("dt", "", label), element("dd", "", text));
@@ -737,7 +1056,7 @@
       }
       function renderAttention(data) {
         const questions = data.questions.filter((row) => !row.answered_at);
-        const huddles = data.huddles.filter((row) => row.status === "open" && (row.waiting_on || []).length);
+        const huddles = data.huddles.filter((row) => row.status === "open" && (row.dashboard_waiting_on || row.waiting_on || []).length);
         const master = data.master_prompt;
         const voters = (master.state || {}).status === "voting" ? master.waiting_on || [] : [];
         const total = questions.length + huddles.length + (voters.length ? 1 : 0);
@@ -746,7 +1065,7 @@
         get("asks").hidden = !total;
         get("asks-title").textContent = total + (total === 1 ? " thing is" : " things are") + " waiting on the team";
         for (const row of questions.slice(0, 4)) container.append(element("li", "", row.sender + " asked “" + excerpt(row.text) + "” · waiting on " + row.recipient));
-        for (const row of huddles.slice(0, 4)) container.append(element("li", "", words(row.kind) + ": “" + excerpt(row.topic) + "” · waiting on " + row.waiting_on.join(", ")));
+        for (const row of huddles.slice(0, 4)) container.append(element("li", "", words(row.kind) + ": “" + excerpt(row.topic) + "” · waiting on " + (row.dashboard_waiting_on || row.waiting_on).join(", ")));
         if (voters.length) container.append(element("li", "", "Master prompt approval · waiting on " + voters.join(", ")));
         if (questions.length > 4 || huddles.length > 4) container.append(element("li", "hint", "More items are listed in Questions and Huddles below."));
       }
@@ -760,6 +1079,8 @@
         for (const row of [...rows].reverse()) {
           const card = element("article", "feed-entry");
           card.append(element("div", "meta " + agentClass(row.actor), row.actor + " · " + words(row.kind)));
+          const description = describeEvent(row);
+          if (description) card.append(element("p", "event-description", description));
           card.append(element("p", "", row.summary));
           const time = element("time", "meta", timestamp(row.created_at));
           if (Number.isFinite(new Date(row.created_at).getTime())) time.dateTime = new Date(row.created_at).toISOString();
@@ -773,55 +1094,102 @@
         container.scrollTop = first || atTop ? 0 : previousTop + container.scrollHeight - previousHeight;
         get("news-count").textContent = String(rows.length);
       }
-      async function poll() {
-        if (!key || controller) return;
+      function describeEvent(row) {
+        const details = snapshot?.feed_details?.[String(row.id)] || {};
+        const verbs = {
+          task_created: "added", task_proposed: "proposed", task_taken: "took", task_assigned: "assigned",
+          task_claimed: "started", task_started: "started", task_accepted: "accepted", task_declined: "declined",
+          task_updated: "updated", task_blocked: "blocked", task_done: "finished", task_released: "released",
+          task_reopened: "reopened", task_cancelled: "cancelled", task_unblocked: "unblocked"
+        };
+        const task = snapshot?.tasks.find((task) => task.id === row.ref);
+        if (verbs[row.kind]) return row.actor + " " + verbs[row.kind] + " task " + (task ? task.title : shortId(row.ref)) + ".";
+        const question = snapshot?.questions.find((question) => question.id === row.ref);
+        if (row.kind === "question_asked" || row.kind === "ask") return row.actor + " asked" + (question ? " " + question.recipient + ": " + question.text : " a question.");
+        if (row.kind === "question_answered" || row.kind === "reply") return row.actor + " answered" + (question ? " " + question.sender + ": " + (question.answer || "") : " a question.");
+        const huddle = snapshot?.huddles.find((huddle) => huddle.id === row.ref);
+        const topic = huddle ? "“" + huddle.topic + "”" : shortId(row.ref);
+        switch (row.kind) {
+          case "huddle_started": return row.actor + " started a " + (huddle ? words(huddle.kind) + " " : "") + "huddle: " + topic;
+          case "huddle_posted": case "huddle_post": return row.actor + " contributed to " + topic;
+          case "huddle_commented": return row.actor + " commented on " + topic;
+          case "huddle_voted": case "huddle_vote": return row.actor + " voted on an idea in " + topic;
+          case "huddle_closed": return row.actor + " closed " + topic + " with a decision.";
+          case "master_edited": case "prompt_edit": return row.actor + " edited master prompt section “" + row.ref + "”.";
+          case "master_submitted": case "prompt_submitted": return row.actor + " submitted the master prompt for the team's vote.";
+          case "master_voted": case "prompt_vote": return details.decision
+            ? row.actor + " " + (details.decision === "approve" ? "approved" : "rejected") + " master prompt v" + details.revision + (details.note ? ": " + details.note : ".")
+            : row.actor + " recorded a master prompt vote.";
+          case "master_locked": case "prompt_locked": return "Both agents approved the master prompt; it is now locked.";
+          case "file_claimed": case "file_edit": return row.actor + " reserved " + row.ref + " for editing.";
+          case "file_released": return row.actor + " released " + row.ref + ".";
+          case "commit": return row.actor + " announced commit " + row.ref + ".";
+          case "settings_changed": return row.actor + " updated coordination settings.";
+          case "lead_changed": return "The project lead changed.";
+          case "plan_created": return row.actor + " created the task plan.";
+          case "update": return row.actor + " shared an update.";
+          case "decision": return row.actor + " recorded a decision.";
+          default: return "";
+        }
+      }
+      async function poll(afterWrite = false) {
+        if (!key || controller || (writing && !afterWrite)) return;
         const currentSession = session;
         const requestController = new AbortController();
         controller = requestController;
         try {
-          const response = await fetch("/v1/transcript?after=" + lastEventId, {
+          const path = accessMode === "agent" ? "/v1/dashboard/state?after=" : "/v1/transcript?after=";
+          const response = await fetch(path + lastEventId, {
             headers: { Authorization: "Bearer " + key },
             cache: "no-store", signal: requestController.signal
           });
-          if (session !== currentSession) return;
+          if (session !== currentSession || controller !== requestController) return;
           if (response.status === 401 || response.status === 403) {
-            showAuth("The viewer key was rejected. Enter a valid viewer key to reconnect.", true);
+            showAuth(accessMode === "agent" ? "The agent token was rejected. Enter a valid agent token to reconnect." : "The viewer key was rejected. Enter a valid viewer key to reconnect.", true);
             return;
           }
           if (!response.ok) throw new Error("Request failed");
           const data = await response.json();
-          if (session !== currentSession) return;
+          if (session !== currentSession || controller !== requestController) return;
           if (![data.messages, data.tasks, data.patches, data.audit, data.events].every(Array.isArray) || !Number.isSafeInteger(data.last_event_id)) throw new Error("Invalid snapshot");
           // Defaults keep this dashboard usable with older server snapshots.
           data.master_prompt = data.master_prompt || {};
           for (const name of ["huddles", "claims", "questions", "news"]) if (!Array.isArray(data[name])) data[name] = [];
+          if (accessMode === "agent" && !agents.includes(data.me)) throw new Error("Invalid agent identity");
+          if (me !== (accessMode === "agent" ? data.me : null)) rendered = {};
+          me = accessMode === "agent" ? data.me : null;
           data.claims = data.claims.filter((row) => new Date(row.expires_at).getTime() > Date.now());
           snapshot = data;
           for (const [name, id, render] of [["messages", "messages", renderMessages], ["tasks", "tasks", renderTasks], ["patches", "patches", renderPatches], ["audit", "audit", renderAudit], ["master_prompt", "master", renderMaster], ["huddles", "huddles", renderHuddles], ["claims", "claims", renderClaims], ["questions", "questions", renderQuestions], ["news", "news", renderNews]]) {
-            const signature = JSON.stringify(data[name]);
+            const signature = JSON.stringify(data[name]) + (["claims", "questions"].includes(name) ? JSON.stringify(data.tasks.map((task) => [task.id, task.title])) : "");
             if (signature !== rendered[name]) {
               if (["messages", "audit", "news"].includes(name)) render(data[name]);
               else preserveView(id, () => render(data[name]));
               rendered[name] = signature;
             }
           }
-          renderTeam(data);
+          preserveView("members", () => renderTeam(data));
           renderAttention(data);
           lastEventId = data.last_event_id;
           const now = new Date();
           get("last-updated").textContent = now.toLocaleTimeString();
           get("last-updated").dateTime = now.toISOString();
-          setStatus("Live · read-only", "live");
+          get("access-description").textContent = canWrite() ? "Two agents. One shared workspace. Participating as " + me + "." : "Two agents. One shared workspace. A read-only view.";
+          get("access-footer").textContent = (canWrite() ? "Agent access · " + me : "Read-only") + " · Full snapshots every 4 seconds";
+          get("asks-hint").textContent = canWrite() ? "Use the controls below to respond as " + me + ". Your agent can also respond from its own session." : "Your agents handle questions, ideas and votes from their own sessions. This dashboard is read-only.";
+          setStatus(canWrite() ? "Live · " + me : "Live · read-only", "live");
         } catch (error) {
           if (session === currentSession && !requestController.signal.aborted) setStatus("Connection interrupted · retrying every 4 seconds", "warning");
         } finally {
           if (controller === requestController) controller = null;
         }
       }
-      function startSession(viewerKey) {
+      function startSession(viewerKey, mode = "viewer") {
         stopSession();
         key = viewerKey;
-        storage.set("agentmesh-viewer", key);
+        accessMode = mode;
+        if (mode === "viewer") storage.set("agentmesh-viewer", key);
+        else storage.remove("agentmesh-viewer"); // Agent credentials are memory-only.
         get("viewer-key").value = "";
         get("auth-error").hidden = true;
         get("auth").hidden = true;
@@ -840,8 +1208,9 @@
           get("auth-error").hidden = false;
           return;
         }
-        startSession(viewerKey);
+        startSession(viewerKey, get("access-mode").value === "agent" ? "agent" : "viewer");
       });
+      get("access-mode").value = "viewer";
       const storedKey = storage.get("agentmesh-viewer");
       if (storedKey) startSession(storedKey);
       else showAuth();

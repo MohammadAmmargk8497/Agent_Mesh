@@ -21,7 +21,8 @@ assignee; patches are shared between both agents. Review and cancellation belong
 and completion belong to the assignee. Conflicting state transitions return 409.
 
 `GET /health` is public. The Python server serves its public dashboard on `/` and `/index.html`, with a fresh CSP
-nonce and no embedded tokens. The dashboard uses the viewer's bearer token for the transcript request.
+nonce and no embedded tokens. Viewer mode uses the viewer's bearer token for the transcript request;
+Agent mode uses that member's bearer token for the separate dashboard-state route and authenticated writes.
 
 The Python server permits at most four simultaneous event waiters per agent and rejects excess waiters with 429.
 Both backends limit requests to 120 per identity/IP per minute and request bodies to 256 KiB. A daily cleanup removes
@@ -248,9 +249,9 @@ unanswered questions and all master prompt records remain. Expired claims are
 inactive immediately; daily cleanup physically removes them. Existing retention
 windows are unchanged.
 
-Viewer snapshots add `master_prompt`, `huddles` (including posts), `claims`
-(active only), `questions` and `news` (latest 200). The dashboard displays
-read-only panels alongside existing controls and renders remote data as text.
+Viewer snapshots add `master_prompt`, `huddles` (including posts and dashboard votes), `claims`
+(active only), `questions`, `member_settings` and `news` (latest 200). The dashboard's
+Viewer mode stays read-only; Agent mode exposes authenticated controls. Both render remote data as text.
 All prior endpoints and MCP tool names remain; existing mutation, message,
 identity and event response shapes are unchanged. Task objects and transcript
 snapshots gain additive keys that older clients should ignore.
@@ -261,3 +262,87 @@ decision. Existing task retention still removes accepted tasks after 90 days;
 an unfinished task referencing a removed dependency treats it as missing and
 remains blocked. Finish dependent work within that window or create replacement
 tasks rather than relying on deleted history.
+
+## Dashboard controls
+
+Both hosts serve byte-identical, self-contained dashboards, with no CDN assets.
+The existing AgentMesh theme, theme switch, viewer sign-in and four-second polling
+remain. Agent mode uses `GET /v1/dashboard/state?after=N`, with the same snapshot
+structure plus `me` (the authenticated member) and task `dashboard_status` values.
+Private messages, questions and event cursors remain scoped to that member;
+the viewer-only transcript is not made available to agent tokens. Shared prompt,
+huddles, claims, news and patch metadata are still shared between both members.
+Agent dashboard task-news entries are limited to visible tasks; the existing
+team-wide MCP news endpoint and viewer transcript keep their prior behavior.
+Viewer tokens authorize only the existing transcript route, never write actions.
+Agent credentials are not persisted in local storage; sign-out clears private
+content and unsent drafts. Actions report errors without discarding drafts.
+
+### Task assignment controls
+
+The dashboard follows OpenHuddle's assignment flow without changing the legacy
+MCP task-state vocabulary or response shapes:
+
+| Dashboard state/control | Meaning and legacy task state |
+| --- | --- |
+| `proposed` | An existing `open` task proposed to its assignee. |
+| Accept / Take it | Record `assigned` in additive dashboard metadata; legacy state stays `open`. |
+| Decline / Release | Make the task available as dashboard `open`; legacy state stays/becomes `open`. |
+| Start | Assigned member starts ready work; both states become `in_progress`. |
+| Mark done | Assigned member finishes started work; both states become `done`. |
+| Accept completion / Reopen | Creator review uses the unchanged MCP review endpoint; legacy `accepted` is completion approval, not assignment acceptance. |
+
+The new JSON POST routes are `/v1/dashboard/tasks/{id}/{take|accept|decline|start|release|finish}`.
+They return `{id, status, dashboard_status}`. Bodies are objects (`{}` for controls
+without prose); `finish` optionally accepts `summary` (8000 UTF-16 units).
+Accept/decline require a proposal addressed to the caller; take requires available
+work; start/release/finish require the caller's assignment and valid state. Start
+also checks dependencies. Release and finish remove that member's claims associated
+with the task. Initial task visibility remains creator/assignee-only. Explicitly
+declining or releasing a task makes its dashboard `open` state visible and
+takeable by either member; untouched private self-proposals remain private.
+Legacy task GET permissions stay unchanged. `blocked`, `accepted`
+and `cancelled` legacy states remain visible, with creator review where applicable.
+
+### Huddle discussion controls
+
+Start (`brainstorm`, `design`, `review`, `standup`), idea posting and owner-only
+close-with-decision reuse the existing MCP routes. Additive JSON POST routes:
+
+| Route | Body / rules |
+| --- | --- |
+| `/v1/huddles/{id}/comments` | `{text, ref_post_id?}`; text up to 8000 units; optional reference in that huddle. |
+| `/v1/huddles/{id}/votes` | `{ref_post_id, vote: "up"\|"down", note?}`; idea-only target, other author, optional note up to 500 units. |
+
+Votes are one current choice per member and idea; voting again replaces the old
+choice, rather than increasing the score. Closed huddles reject new comments and
+votes. Snapshot huddles include a `votes` array; legacy huddle GET responses stay
+unchanged. The additive snapshot `dashboard_waiting_on` lists count posts and
+votes as participation, and the starter already counts except in a standup.
+Existing transcript `waiting_on` values retain their legacy post-only meaning;
+the new agent dashboard-state route projects the dashboard meaning.
+Legacy backing/push-back posts still
+appear in discussions and scores. Full posts, vote notes, decisions and who is
+still expected to contribute are visible in the dashboard.
+
+### Other mapped controls and exclusions
+
+Prompt section Edit/Save/Cancel, Submit for vote, and Approve/Reject with optional
+comment reuse `/v1/master/sections`, `/submit`, and `/vote`. Editing while voting
+remains rejected, as in the existing AgentMesh MCP API. Questions use `/v1/questions`
+and `/{id}/answer`; only the recipient may answer, once. File reservations use
+`/v1/claims` and `/release`; only their holder may release. The automatic-reply
+toggle uses `/v1/settings` for the authenticated member only. All JSON writes keep
+the existing 256 KiB body limit and text sanitization/field caps.
+
+The live feed retains existing news and renders huddle activity, prompt edits and
+votes, task lifecycle changes, questions/answers, file claims/releases and commit
+announcements. Commit announcements display news produced by `/v1/commits`; they
+never execute Git or synchronize files. No presence/online status is fabricated.
+New prompt votes retain their decision, comment and revision in additive
+snapshot `feed_details` keyed by news ID, so later votes do not overwrite feed
+history. Older events without those details retain their original summaries.
+The existing news endpoint's response shape is unchanged.
+
+Invite/join, team creation/deletion, member removal, and multi-team switching are
+out of scope because AgentMesh has one fixed pair of members.

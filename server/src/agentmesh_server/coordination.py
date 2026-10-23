@@ -15,8 +15,9 @@ JS_WHITESPACE = "\t\n\v\f\r \u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u20
 CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
 ALL_CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f]")
 UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.IGNORECASE)
-HUDDLE_PATH = re.compile(r"/v1/huddles/([0-9a-f-]{36})(?:/(posts|close))?", re.IGNORECASE)
+HUDDLE_PATH = re.compile(r"/v1/huddles/([0-9a-f-]{36})(?:/(posts|comments|votes|close))?", re.IGNORECASE)
 QUESTION_PATH = re.compile(r"/v1/questions/([0-9a-f-]{36})/answer", re.IGNORECASE)
+DASHBOARD_TASK_PATH = re.compile(r"/v1/dashboard/tasks/([0-9a-f-]{36})/(take|accept|decline|start|release|finish)", re.IGNORECASE)
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS master_sections (
  section TEXT PRIMARY KEY,text TEXT NOT NULL,author TEXT NOT NULL,revision INTEGER NOT NULL,
@@ -47,6 +48,20 @@ CREATE TABLE IF NOT EXISTS huddle_posts (
  id TEXT PRIMARY KEY,huddle_id TEXT NOT NULL,author TEXT NOT NULL,kind TEXT NOT NULL,
  text TEXT NOT NULL,ref_post_id TEXT,created_at INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS huddle_votes (
+ huddle_id TEXT NOT NULL,ref_post_id TEXT NOT NULL,agent TEXT NOT NULL,
+ vote TEXT NOT NULL,note TEXT,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL,
+ PRIMARY KEY(huddle_id,ref_post_id,agent)
+);
+CREATE TABLE IF NOT EXISTS dashboard_tasks (
+ task_id TEXT PRIMARY KEY,state TEXT NOT NULL CHECK(state IN ('open','assigned'))
+);
+CREATE TRIGGER IF NOT EXISTS dashboard_tasks_status
+AFTER UPDATE OF status ON tasks
+WHEN NEW.status <> 'open' OR OLD.status <> 'open'
+BEGIN
+ DELETE FROM dashboard_tasks WHERE task_id=NEW.id;
+END;
 CREATE TABLE IF NOT EXISTS questions (
  id TEXT PRIMARY KEY,sender TEXT NOT NULL,recipient TEXT NOT NULL,text TEXT NOT NULL,
  task_id TEXT,answer TEXT,created_at INTEGER NOT NULL,answered_at INTEGER
@@ -56,6 +71,7 @@ CREATE TABLE IF NOT EXISTS news (
  ref TEXT NOT NULL,summary TEXT NOT NULL,created_at INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS news_seen (agent TEXT PRIMARY KEY,last_id INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS news_details (news_id INTEGER PRIMARY KEY,data TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS member_settings (
  agent TEXT PRIMARY KEY,auto_respond INTEGER NOT NULL DEFAULT 1 CHECK(auto_respond IN (0,1))
 );
@@ -123,8 +139,11 @@ def sweep(db, now):
     removed = {}
     removed["file_claims"] = db.execute("DELETE FROM file_claims WHERE expires_at<=?", (now,)).rowcount
     removed["news"] = db.execute("DELETE FROM news WHERE created_at<?", (now - 30 * DAY,)).rowcount
+    db.execute("DELETE FROM news_details WHERE news_id NOT IN (SELECT id FROM news)")
     db.execute("DELETE FROM huddle_posts WHERE huddle_id IN (SELECT id FROM huddles WHERE status='closed' AND closed_at<?)", (now - 90 * DAY,))
     removed["huddles"] = db.execute("DELETE FROM huddles WHERE status='closed' AND closed_at<?", (now - 90 * DAY,)).rowcount
+    db.execute("DELETE FROM huddle_votes WHERE huddle_id NOT IN (SELECT id FROM huddles)")
+    db.execute("DELETE FROM dashboard_tasks WHERE task_id NOT IN (SELECT id FROM tasks)")
     removed["questions"] = db.execute("DELETE FROM questions WHERE answered_at IS NOT NULL AND answered_at<?", (now - 30 * DAY,)).rowcount
     return removed
 
@@ -142,8 +161,10 @@ def emit(state, recipient, actor, kind, ref, now):
     state.condition.notify_all()
 
 
-def changed(state, actor, kind, ref, summary, now, everyone=False):
+def changed(state, actor, kind, ref, summary, now, everyone=False, details=None):
     news_id = news(state, actor, kind, ref, summary, now)
+    if details is not None:
+        state.db.execute("INSERT INTO news_details (news_id,data) VALUES (?,?)", (news_id, json.dumps(details)))
     for member in AGENTS:
         if everyone or member != actor:
             emit(state, member, actor, kind, ref, now)
@@ -257,20 +278,88 @@ def master(state):
             "edits": state.rows("SELECT * FROM master_edits ORDER BY revision DESC LIMIT 50")[::-1]}
 
 
-def huddle(state, row):
+def huddle(state, row, include_dashboard=False):
     posts = state.rows("SELECT * FROM huddle_posts WHERE huddle_id=? ORDER BY created_at,rowid", row["id"])
     row["posts"] = posts
     posted = {post["author"] for post in posts}
     row["waiting_on"] = [agent for agent in AGENTS if agent not in posted] if row["status"] == "open" else []
+    if include_dashboard:
+        row["votes"] = state.rows("SELECT * FROM huddle_votes WHERE huddle_id=? ORDER BY created_at,agent", row["id"])
+        posted.update(vote["agent"] for vote in row["votes"])
+        if row["kind"] != "standup":
+            posted.add(row["owner"])
+        row["dashboard_waiting_on"] = [agent for agent in AGENTS if agent not in posted] if row["status"] == "open" else []
     return row
 
 
-def snapshot(state, now):
+def snapshot(state, now, agent=None):
+    huddles = [huddle(state, row, include_dashboard=True) for row in state.rows("SELECT * FROM huddles ORDER BY created_at DESC LIMIT 100")]
+    news_items = state.rows("SELECT * FROM news ORDER BY id DESC LIMIT 200")[::-1]
+    if agent:
+        for item in huddles:
+            item["waiting_on"] = item["dashboard_waiting_on"]
+        visible = {row["id"] for row in state.rows("SELECT id FROM tasks WHERE created_by=? OR assignee=? OR (status='open' AND id IN (SELECT task_id FROM dashboard_tasks WHERE state='open'))", agent, agent)}
+        news_items = [item for item in news_items if not item["kind"].startswith("task_") or item["ref"] in visible]
     return {"master_prompt": master(state),
-            "huddles": [huddle(state, row) for row in state.rows("SELECT * FROM huddles ORDER BY created_at DESC LIMIT 100")],
+            "huddles": huddles,
             "claims": state.rows("SELECT * FROM file_claims WHERE expires_at>? ORDER BY path", now),
-            "questions": state.rows("SELECT * FROM questions ORDER BY created_at DESC LIMIT 200")[::-1],
-            "news": state.rows("SELECT * FROM news ORDER BY id DESC LIMIT 200")[::-1]}
+            "questions": state.rows("SELECT * FROM questions" + (" WHERE sender=? OR recipient=?" if agent else "") + " ORDER BY created_at DESC LIMIT 200", *((agent, agent) if agent else ()))[::-1],
+            "news": news_items,
+            "feed_details": {str(row["news_id"]): json.loads(row["data"]) for row in state.rows("SELECT * FROM news_details WHERE news_id IN (SELECT id FROM news ORDER BY id DESC LIMIT 200)")},
+            "member_settings": [{"agent": agent, "auto_respond": auto_respond_enabled(state, agent)} for agent in AGENTS]}
+
+
+def dashboard_status(state, task):
+    """Project dashboard assignment without changing the legacy MCP vocabulary."""
+    if task["status"] != "open":
+        return task["status"]
+    selected = state.rows("SELECT state FROM dashboard_tasks WHERE task_id=?", task["id"])
+    return selected[0]["state"] if selected else "proposed"
+
+
+def dashboard_task_action(state, agent, task_id, action, body, now):
+    found = state.rows("SELECT * FROM tasks WHERE id=?", task_id)
+    if not found:
+        raise CoordinationError(404, "task not found")
+    task = task_fields(state, found[0])
+    status = dashboard_status(state, task)
+    if agent not in (task["created_by"], task["assignee"]) and not (action == "take" and status == "open"):
+        raise CoordinationError(404, "task not found")
+    summary = clean_text(body["summary"]) if "summary" in body else "Completed from dashboard"
+    if action in ("accept", "decline"):
+        if task["assignee"] != agent:
+            raise CoordinationError(403, "only the proposed assignee may respond")
+        if status != "proposed":
+            raise CoordinationError(409, "task is not proposed")
+        next_status = "assigned" if action == "accept" else "open"
+    elif action == "take":
+        if status not in ("proposed", "open"):
+            raise CoordinationError(409, "task is not available")
+        next_status = "assigned"
+        state.db.execute("UPDATE tasks SET assignee=? WHERE id=?", (agent, task_id))
+    else:
+        if task["assignee"] != agent:
+            raise CoordinationError(403, "only the assignee may update this task")
+        allowed = ("assigned", "in_progress") if action == "release" else (("assigned",) if action == "start" else ("in_progress",))
+        if status not in allowed:
+            raise CoordinationError(409, "task is not in the required state")
+        if action == "start" and task["waiting_on"]:
+            raise CoordinationError(409, "waiting on dependencies", waiting_on=task["waiting_on"])
+        next_status = {"start": "in_progress", "release": "open", "finish": "done"}[action]
+    legacy_status = "open" if next_status in ("open", "assigned") else next_status
+    state.db.execute("UPDATE tasks SET status=?,updated_at=? WHERE id=?", (legacy_status, now, task_id))
+    if next_status in ("open", "assigned"):
+        state.db.execute("INSERT INTO dashboard_tasks (task_id,state) VALUES (?,?) ON CONFLICT(task_id) DO UPDATE SET state=excluded.state", (task_id, next_status))
+    if action == "finish":
+        state.db.execute("UPDATE tasks SET result=? WHERE id=?", (summary, task_id))
+    if action in ("release", "finish"):
+        state.db.execute("DELETE FROM file_claims WHERE task_id=? AND agent=?", (task_id, agent))
+    event = {"take": "task_taken", "accept": "task_accepted", "decline": "task_declined",
+             "start": "task_claimed", "release": "task_released", "finish": "task_done"}[action]
+    changed(state, agent, event, task_id, "Task " + action + ": " + task["title"], now)
+    if action == "finish":
+        unblocked(state, agent, task_id, now)
+    return {"id": task_id, "status": legacy_status, "dashboard_status": next_status}, 200
 
 
 def route(handler, state, agent, path, query, now):
@@ -278,6 +367,12 @@ def route(handler, state, agent, path, query, now):
     method, db, rows = handler.command, state.db, state.rows
     def param(name):
         return query.get(name, [None])[0]
+
+    match = DASHBOARD_TASK_PATH.fullmatch(path)
+    if match:
+        if method != "POST":
+            raise CoordinationError(405, "method not allowed")
+        return dashboard_task_action(state, agent, match[1], match[2].lower(), handler._body_json(), now)
 
     if path == "/v1/settings" and method in ("GET", "POST"):
         if method == "POST":
@@ -322,7 +417,8 @@ def route(handler, state, agent, path, query, now):
                 raise CoordinationError(400, "decision must be approve or reject")
             note = clean_text(body["note"]) if "note" in body else None
             db.execute("INSERT INTO master_votes (round,agent,decision,note) VALUES (?,?,?,?) ON CONFLICT(round,agent) DO UPDATE SET decision=excluded.decision,note=excluded.note", (current["round"], agent, decision, note))
-            changed(state, agent, "master_voted", str(current["round"]), "Master prompt vote recorded", now)
+            changed(state, agent, "master_voted", str(current["round"]), "Master prompt vote recorded", now,
+                    details={"decision": decision, "note": note, "revision": current["revision"]})
             if decision == "reject":
                 db.execute("UPDATE master_state SET status='draft' WHERE id=1")
             elif db.execute("SELECT COUNT(*) FROM master_votes WHERE round=? AND decision='approve'", (current["round"],)).fetchone()[0] == len(AGENTS):
@@ -407,13 +503,35 @@ def route(handler, state, agent, path, query, now):
         current = found[0]
         if method == "GET" and action is None:
             return {"huddle": huddle(state, current)}, 200
-        if method != "POST" or action not in ("posts", "close"):
+        if method != "POST" or action not in ("posts", "comments", "votes", "close"):
             raise CoordinationError(405, "method not allowed")
         if action == "close" and current["owner"] != agent:
             raise CoordinationError(403, "only the owner may close a huddle")
         if current["status"] != "open":
             raise CoordinationError(409, "huddle is closed")
         body = handler._body_json()
+        if action in ("comments", "votes"):
+            ref = body.get("ref_post_id")
+            referenced = rows("SELECT * FROM huddle_posts WHERE id=? AND huddle_id=?", ref, huddle_id) if isinstance(ref, str) and UUID.fullmatch(ref) else []
+            if (ref is not None and not referenced) or (action == "votes" and not referenced):
+                raise CoordinationError(400, "ref_post_id must refer to this huddle")
+            if action == "comments":
+                text = clean_text(body.get("text"))
+                post_id = str(uuid.uuid4())
+                db.execute("INSERT INTO huddle_posts (id,huddle_id,author,kind,text,ref_post_id,created_at) VALUES (?,?,?,'comment',?,?,?)", (post_id, huddle_id, agent, text, ref, now))
+                changed(state, agent, "huddle_commented", huddle_id, "Huddle comment: " + current["topic"] + " — " + text, now)
+                return {"id": post_id, "created_at": now}, 201
+            if referenced[0]["kind"] != "idea":
+                raise CoordinationError(400, "only ideas may receive votes")
+            if referenced[0]["author"] == agent:
+                raise CoordinationError(403, "cannot vote on your own idea")
+            if body.get("vote") not in ("up", "down"):
+                raise CoordinationError(400, "vote must be up or down")
+            note = clean_text(body["note"], 500) if "note" in body else None
+            db.execute("INSERT INTO huddle_votes (huddle_id,ref_post_id,agent,vote,note,created_at,updated_at) VALUES (?,?,?,?,?,?,?) ON CONFLICT(huddle_id,ref_post_id,agent) DO UPDATE SET vote=excluded.vote,note=excluded.note,updated_at=excluded.updated_at", (huddle_id, ref, agent, body["vote"], note, now, now))
+            summary = ("Backed" if body["vote"] == "up" else "Pushed back on") + " idea " + ref + " in " + current["topic"]
+            changed(state, agent, "huddle_voted", huddle_id, summary + (": " + note if note else ""), now)
+            return {"huddle_id": huddle_id, "ref_post_id": ref, "agent": agent, "vote": body["vote"], "note": note}, 200
         if action == "posts":
             if body.get("kind") not in ("idea", "back", "push_back"):
                 raise CoordinationError(400, "invalid post kind")
