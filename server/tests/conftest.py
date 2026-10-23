@@ -67,7 +67,7 @@ def api(tmp_path):
 
     config_dir = tmp_path / "config"
     config = init_config(config_dir)
-    server = create_server(config_dir, port=0)
+    server = create_server(config_dir, port=0, hub=False)
     thread = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.02}, daemon=True)
     thread.start()
     try:

@@ -1,9 +1,14 @@
 import { DurableObject } from "cloudflare:workers";
 import dashboard from "./dashboard.html";
+import hubDashboard from "./hub_dashboard.html";
+import hubJoin from "./hub_join.html";
+export { HubRoom } from "./openhuddle/hub-room";
+import type { HubRoom } from "./openhuddle/hub-room";
 import { Coordination, HttpError } from "./coordination";
 
 interface Env {
   ROOM: DurableObjectNamespace<Room>;
+  HUB: DurableObjectNamespace<HubRoom>;
   // Comma-separated to allow rotation: "new,old". Each token must be >= 32 chars.
   AGENT_A_TOKEN: string;
   AGENT_B_TOKEN: string;
@@ -59,6 +64,31 @@ async function identify(token: string, env: Env): Promise<Agent | "viewer" | nul
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
+    // Hub member tokens live in the hub DB, not the legacy environment identify gate.
+    const hubRoute = url.pathname.startsWith("/api/") || url.pathname.startsWith("/t/") || url.pathname.startsWith("/join/") || url.pathname === "/robots.txt";
+    if (hubRoute) {
+      const ip = request.headers.get("cf-connecting-ip") ?? "unknown";
+      if (env.LIMITER && !(await env.LIMITER.limit({ key: `ip:${ip}` })).success) return error("rate limited", 429);
+      if (url.pathname.startsWith("/api/")) {
+        const headers = new Headers(request.headers);
+        headers.set("x-agentmesh-client-ip", ip); // Never trust a caller-supplied limiter identity.
+        return env.HUB.get(env.HUB.idFromName("openhuddle-hub")).fetch(new Request(request, { headers }));
+      }
+      const head = request.method === "HEAD";
+      if (request.method !== "GET" && !head) return error("not found", 404);
+      if (url.pathname === "/robots.txt") return new Response(head ? null : "User-agent: *\nDisallow: /t/\nDisallow: /join/\n", { headers: { "content-type": "text/plain; charset=utf-8" } });
+      const join = /^\/join\/([a-z0-9]+\.[A-Za-z0-9_-]+)$/.exec(url.pathname);
+      if (!join && !/^\/t\/[a-z0-9]+$/.test(url.pathname)) return error("not found", 404);
+      const escapeHtml = (value: string) => value.replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]!));
+      const nonce = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(16))));
+      const page = (join ? hubJoin : hubDashboard).replaceAll("{{HUB_URL}}", escapeHtml(url.origin))
+        .replaceAll("{{INVITE_URL}}", escapeHtml(url.origin + url.pathname)).replaceAll("__AGENTMESH_NONCE__", nonce);
+      return new Response(head ? null : page, { headers: {
+        "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff",
+        "referrer-policy": "no-referrer", "x-frame-options": "DENY",
+        "content-security-policy": `default-src 'none'; script-src 'nonce-${nonce}'; style-src 'nonce-${nonce}' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src 'self'; img-src 'self' data:; base-uri 'none'; frame-ancestors 'none'`,
+      } });
+    }
     const dashboardHost = url.hostname === "agentmesh.zahid.win";
     if (dashboardHost && request.method === "GET" &&
         (url.pathname === "/" || url.pathname === "/index.html")) {

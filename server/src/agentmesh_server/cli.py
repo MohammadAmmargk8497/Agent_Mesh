@@ -22,6 +22,7 @@ def main(argv=None):
         else:
             command.add_argument("--host", default="127.0.0.1")
             command.add_argument("--port", type=int, default=8787)
+            command.add_argument("--public-url", help="public hub origin (or AGENTMESH_PUBLIC_URL)")
             command.add_argument("--allow-remote-bind", action="store_true",
                                  help="explicitly permit listening beyond loopback")
     args = parser.parse_args(argv)
@@ -34,7 +35,8 @@ def main(argv=None):
                 print(f"\n# {label}\nAGENTMESH_URL=http://localhost:8787\nAGENTMESH_TOKEN={config[key]}")
             print(f"\nViewer key (dashboard only): {config['VIEWER_TOKEN']}")
             return
-        server = create_server(args.config_dir, args.host, args.port, args.allow_remote_bind)
+        server = create_server(args.config_dir, args.host, args.port, args.allow_remote_bind,
+                               public_url=args.public_url)
     except (OSError, ValueError) as exc:
         parser.exit(2, f"agentmesh-server: {exc}\n")
 

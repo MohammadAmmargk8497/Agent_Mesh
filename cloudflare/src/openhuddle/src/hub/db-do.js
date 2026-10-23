@@ -1,0 +1,157 @@
+// Provenance: OpenHuddle 59105e5 src/hub/db.js, MIT; adapted: DO SQL adapter, schema-version table and transactionSync (PRAGMA user_version unsupported)
+const SCHEMA = `
+CREATE TABLE IF NOT EXISTS teams (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  repo_url TEXT,
+  settings TEXT NOT NULL,
+  invite_secret TEXT NOT NULL,
+  invite_expires_at INTEGER NOT NULL,
+  prompt TEXT NOT NULL,
+  next_task INTEGER NOT NULL DEFAULT 1,
+  next_ask INTEGER NOT NULL DEFAULT 1,
+  created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS members (
+  id TEXT PRIMARY KEY,
+  team_id TEXT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  role TEXT NOT NULL,
+  tool TEXT,
+  strengths TEXT,
+  token_hash TEXT NOT NULL UNIQUE,
+  status TEXT,
+  last_seen INTEGER,
+  joined_at INTEGER NOT NULL,
+  removed_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS members_team ON members(team_id);
+CREATE TABLE IF NOT EXISTS events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  team_id TEXT NOT NULL,
+  member_id TEXT,
+  kind TEXT NOT NULL,
+  data TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS events_team ON events(team_id, id);
+CREATE TABLE IF NOT EXISTS prompt_versions (
+  team_id TEXT NOT NULL,
+  version INTEGER NOT NULL,
+  sections TEXT NOT NULL,
+  author_id TEXT,
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY (team_id, version)
+);
+CREATE TABLE IF NOT EXISTS tasks (
+  team_id TEXT NOT NULL,
+  key TEXT NOT NULL,
+  seq INTEGER NOT NULL,
+  title TEXT NOT NULL,
+  description TEXT,
+  area TEXT NOT NULL DEFAULT '[]',
+  depends_on TEXT NOT NULL DEFAULT '[]',
+  acceptance TEXT,
+  status TEXT NOT NULL,
+  assignee_id TEXT,
+  proposed_id TEXT,
+  branch TEXT,
+  note TEXT,
+  created_by TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (team_id, key)
+);
+CREATE TABLE IF NOT EXISTS claims (
+  team_id TEXT NOT NULL,
+  path TEXT NOT NULL,
+  member_id TEXT NOT NULL,
+  task_key TEXT,
+  expires_at INTEGER NOT NULL,
+  PRIMARY KEY (team_id, path)
+);
+CREATE TABLE IF NOT EXISTS asks (
+  team_id TEXT NOT NULL,
+  id TEXT NOT NULL,
+  from_id TEXT NOT NULL,
+  to_id TEXT NOT NULL,
+  question TEXT NOT NULL,
+  answer TEXT,
+  created_at INTEGER NOT NULL,
+  answered_at INTEGER,
+  PRIMARY KEY (team_id, id)
+);
+`;
+
+// 0.4.0: huddles, where the team brainstorms, discusses designs, reviews and does standups.
+// A function, because SQLite has no ADD COLUMN IF NOT EXISTS and a re-run must stay harmless.
+function huddles(db) {
+  const cols = db.prepare('PRAGMA table_info(teams)').all().map((c) => c.name);
+  if (!cols.includes('next_huddle')) db.exec('ALTER TABLE teams ADD COLUMN next_huddle INTEGER NOT NULL DEFAULT 1');
+  db.exec(HUDDLE_TABLES);
+}
+
+const HUDDLE_TABLES = `
+CREATE TABLE IF NOT EXISTS huddles (
+  team_id TEXT NOT NULL,
+  id TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  topic TEXT NOT NULL,
+  context TEXT,
+  started_by TEXT NOT NULL,
+  people TEXT NOT NULL DEFAULT '[]',
+  status TEXT NOT NULL,
+  decision TEXT,
+  why TEXT,
+  closed_by TEXT,
+  next_post INTEGER NOT NULL DEFAULT 1,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  closed_at INTEGER,
+  PRIMARY KEY (team_id, id)
+);
+CREATE TABLE IF NOT EXISTS huddle_posts (
+  team_id TEXT NOT NULL,
+  huddle_id TEXT NOT NULL,
+  seq INTEGER NOT NULL,
+  member_id TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  text TEXT NOT NULL,
+  on_seq INTEGER,
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY (team_id, huddle_id, seq)
+);
+CREATE TABLE IF NOT EXISTS huddle_votes (
+  team_id TEXT NOT NULL,
+  huddle_id TEXT NOT NULL,
+  seq INTEGER NOT NULL,
+  member_id TEXT NOT NULL,
+  value INTEGER NOT NULL,
+  note TEXT,
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY (team_id, huddle_id, seq, member_id)
+);
+`;
+
+// Schema changes are appended here, never edited: entry N upgrades a database from N-1 to N.
+// Version 1 is the 0.1.0 schema; databases from 0.1.0 carry no stamp (0) and upgrade in place.
+const MIGRATIONS = [null, SCHEMA, huddles];
+export const SCHEMA_VERSION = MIGRATIONS.length - 1;
+
+export function openDb(db) {
+  // DO SQLite enables foreign keys itself; user_version and SQL BEGIN are unsupported.
+  db.exec('CREATE TABLE IF NOT EXISTS agentmesh_schema (id INTEGER PRIMARY KEY CHECK(id = 1), version INTEGER NOT NULL)');
+  const current = db.prepare('SELECT version FROM agentmesh_schema WHERE id = 1').get()?.version ?? 0;
+  if (current > SCHEMA_VERSION) {
+    throw new Error(`This database was written by a newer version of OpenHuddle (schema ${current}, this hub knows ${SCHEMA_VERSION}). Upgrade the hub instead of downgrading.`);
+  }
+  for (let v = current + 1; v <= SCHEMA_VERSION; v++) {
+    db.transactionSync(() => {
+      const step = MIGRATIONS[v];
+      if (typeof step === 'function') step(db);
+      else db.exec(step);
+      db.prepare('INSERT INTO agentmesh_schema (id, version) VALUES (1, ?) ON CONFLICT(id) DO UPDATE SET version = excluded.version').run(v);
+    });
+  }
+  return db;
+}

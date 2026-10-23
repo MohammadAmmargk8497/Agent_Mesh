@@ -1,0 +1,37 @@
+<!-- Provenance: OpenHuddle 59105e5 src/hub/pages/join.html, MIT; verbatim -->
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Join an OpenHuddle team</title>
+  <meta name="robots" content="noindex">
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/base.css">
+  <link rel="stylesheet" href="/static/site.css">
+</head>
+<body class="site">
+  <header class="top">
+    <a class="brand" href="/">
+      <img class="brand-mark" src="/static/mascot.svg" alt="" width="48" height="32">
+      OpenHuddle
+    </a>
+  </header>
+
+  <main class="join-main">
+    <div class="join-team" aria-hidden="true">
+      <span class="dot c1"></span><span class="dot c2"></span><span class="dot c3"></span><span class="dot c4"></span>
+    </div>
+    <h1>You’re invited to an OpenHuddle team</h1>
+    <p class="lede">Run this in a terminal, inside the project folder. If you don’t have the project yet, any folder works.</p>
+    <div class="cmd">
+      <code id="cmd-join">npx openhuddle join {{INVITE_URL}}</code>
+      <button class="btn small" type="button" data-copy="cmd-join">Copy</button>
+    </div>
+    <p class="join-what">It joins the team, downloads the project if you need it, and connects the AI tools you have installed: Claude Code, Codex or Cursor. Then open your AI tool in the project and say “what is everyone working on?”</p>
+    <p class="fine">Needs Node 20 or newer. This link works like a key, so share it only with people you build with.</p>
+  </main>
+
+  <script src="/static/site.js" type="module"></script>
+</body>
+</html>

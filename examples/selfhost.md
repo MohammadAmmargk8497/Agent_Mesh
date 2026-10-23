@@ -1,28 +1,26 @@
 # Self-hosted client examples
 
-For normal setup, follow the README's [Host steps](../README.md#host-steps) and [Friend steps](../README.md#friend-steps). The `agentmesh-setup` assistant asks for your agent name, server address, and hidden token, saves the client settings, and prints the registration command for you to run. It does not connect to the server or run Claude Code commands. See the README for [troubleshooting](../README.md#troubleshooting) and the [glossary](../README.md#glossary).
+For normal setup, follow the README's [Host steps](../README.md#host-steps) and [Friend steps](../README.md#friend-steps). Without an argument, `agentmesh-setup` configures an existing agent token offline. With an invite URL argument it contacts `/api/join`, saves the returned token in the same `config.env` format, and prints a registration command; it never executes Claude commands for you. New client commands require Node.js 20+, and the Python host requires Node.js 22.13+.
 
 The examples below show the resulting settings for advanced use; you do not need to create the file by hand. All values are placeholders. Keep your own `~/.config/agentmesh/config.env` private (mode 0600 on POSIX systems, restricted account permissions on Windows). Do not add credentials to this repository or Claude's MCP configuration.
 
-## Two machines through Tailscale Serve (recommended)
+## Joining with an invite link
 
-On the Host's client, enter `agent-a` in setup, paste the complete HTTPS address printed by Tailscale Serve, and enter the Host's agent token. The resulting file has this form:
+`agentmesh create` returns a reusable invite for its team. The Host can retrieve it with `agentmesh invite`. In your own private terminal, replace the placeholder locally:
 
-```dotenv
-AGENTMESH_URL=https://host.your-tailnet.ts.net:8443
-AGENTMESH_TOKEN=PASTE_AGENT_A_TOKEN
-AGENTMESH_AGENT_NAME=agent-a
+```bash
+.venv/bin/agentmesh-setup '<invite-link>' --as friend
 ```
 
-On the Friend's client, use `agent-b`, the same HTTPS address, and only the Friend's agent token:
+The link is a credential: it is not hidden in this command and may appear in shell history/process listings. Never send it to assistant chat. Setup joins first, then writes the format below; the hub returns your canonical member name, suffixing duplicates when necessary.
 
 ```dotenv
-AGENTMESH_URL=https://host.your-tailnet.ts.net:8443
-AGENTMESH_TOKEN=PASTE_AGENT_B_TOKEN
-AGENTMESH_AGENT_NAME=agent-b
+AGENTMESH_URL=https://team.your-domain.example
+AGENTMESH_TOKEN=PASTE_TEAM_MEMBER_TOKEN
+AGENTMESH_AGENT_NAME=friend
 ```
 
-Both machines must be able to reach the Host in Tailscale. Use the exact HTTPS address printed by Tailscale Serve. No Cloudflare Access variables are needed. The token determines the authenticated identity; changing `AGENTMESH_AGENT_NAME` does not turn one agent's token into the other's.
+If the Host adds another team member later, they can mint a fresh invite link with `agentmesh invite` and share that link privately. It is reusable for seven days, not consumed by joining. Owner-only `agentmesh invite --rotate` invalidates the previous link.
 
 ## Same-machine development
 
@@ -34,7 +32,7 @@ AGENTMESH_TOKEN=PASTE_AGENT_A_TOKEN
 AGENTMESH_AGENT_NAME=agent-a
 ```
 
-This is loopback HTTP, not a remote URL. Local users can still connect to the port, so keep bearer tokens private. A second local client still needs its own agent token and a separate saved configuration; it must not overwrite the first client's settings.
+This is loopback HTTP, not a remote URL. Local users can still connect to the port, so keep bearer tokens private. A second local client still needs its own member record and a separate saved configuration; it must not overwrite the first client's settings.
 
 ## Separate settings files
 
@@ -65,3 +63,9 @@ AGENTMESH_AGENT_NAME=agent-a
 ```
 
 This HTTP fallback is safe only while Tailscale is up and carries the connection. It is not permission to expose HTTP on a public interface. Plain HTTP to a `*.ts.net` hostname or a public IP is rejected; prefer the HTTPS example above. See [self-hosting operations](../docs/selfhosting.md#direct-tailnet-http-advanced) for the server-side requirements.
+
+## Migration and tool names
+
+Existing agent-a/agent-b `config.env` files stay valid. New tools are `team_sync`, `team_post`, `team_ask`, `team_reply`, `huddle`, `master_prompt`, `plan`, `task`, `claim` and `team_settings`; see README's old→new table. `agentmesh-mcp-legacy` retains the old `/v1` tools; notify/legacy auto-response are unchanged. Seeded hub membership uses SHA-256 of the first configured rotation token on every hub start, whereas `/v1` accepts all rotation tokens. Viewer access stays on the legacy `/` dashboard. Non-`vc_` legacy tokens are not recognized by upstream dash-link validation or token scrubbing.
+
+For Tailscale Serve on port8443, start the host with `agentmesh-server serve --public-url https://YOUR-HOST.YOUR-TAILNET.ts.net:8443`. Team creation/removal/deletion use the CLI/API, not a multi-team dashboard or team switcher.

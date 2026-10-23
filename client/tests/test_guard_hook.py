@@ -37,20 +37,20 @@ def test_guard_asks_or_denies_for_another_members_claim(guard_context, monkeypat
 
     def api(*args):
         calls.append(args)
-        return {"agent": "agent-a", "claims": [{"path": "src/a b.py", "agent": "agent-b", "summary": "EVIL"}]}
+        return {"conflict": {"path": "src/a b.py", "member_id": "mb", "member_name": "agent-b", "summary": "EVIL"}}
 
     monkeypatch.setattr(hooks, "_api", api)
     assert hooks.guard() is None
     result = json.loads(capsys.readouterr().out)["hookSpecificOutput"]
     assert result["hookEventName"] == "PreToolUse" and result["permissionDecision"] == expected
     assert "agent-b" in result["permissionDecisionReason"] and "EVIL" not in result["permissionDecisionReason"]
-    assert calls == [("GET", "/v1/claims?path=src%2Fa+b.py")]
+    assert calls == [("POST", "/api/file-edit", {"path": "src/a b.py"})]
 
 
 @pytest.mark.parametrize("tool,key", [("Write", "file_path"), ("MultiEdit", "file_path"), ("NotebookEdit", "notebook_path")])
 def test_guard_maps_edit_tools_and_notebooks(guard_context, monkeypatch, capsys, tool, key):
     hook_input(monkeypatch, guard_context, tool=tool, **{key: "notebook.ipynb"})
-    monkeypatch.setattr(hooks, "_api", lambda *args: {"agent": "agent-b", "claims": [{"agent": "agent-a"}]})
+    monkeypatch.setattr(hooks, "_api", lambda *args: {"conflict": {"member_id": "ma", "member_name": "agent-a"}})
     hooks.guard()
     assert json.loads(capsys.readouterr().out)["hookSpecificOutput"]["permissionDecision"] == "ask"
 
@@ -60,19 +60,20 @@ def test_guard_finds_repo_root_from_a_subdirectory(guard_context, monkeypatch, c
     subdirectory.mkdir()
     hook_input(monkeypatch, subdirectory, file_path="a.py")
     calls = []
-    monkeypatch.setattr(hooks, "_api", lambda *args: calls.append(args) or {"agent": "agent-a", "claims": []})
+    monkeypatch.setattr(hooks, "_api", lambda *args: calls.append(args) or {"conflict": None})
     hooks.guard()
-    assert calls == [("GET", "/v1/claims?path=src%2Fa.py")]
+    assert calls == [("POST", "/api/file-edit", {"path": "src/a.py"})]
     assert capsys.readouterr().out == ""
 
 
 @pytest.mark.parametrize("response", [
-    {"agent": "agent-a", "claims": []},
-    {"agent": "agent-a", "claims": [{"agent": "agent-a"}]},
-    {"agent": "agent-a", "claims": [{"agent": "agent-b\nEVIL"}]},
-    {"claims": [{"agent": "agent-b"}]},
-    {"agent": "viewer", "claims": [{"agent": "agent-b"}]},
-    {"agent": "agent-a", "claims": None},
+    {"conflict": None},
+    {"conflict": {}},
+    {"conflict": {"member_name": "agent-b\nEVIL"}},
+    {"conflict": {"member_name": "<script>"}},
+    {"conflict": {"member_name": None}},
+    {"conflict": []},
+    {},
 ])
 def test_guard_is_silent_for_free_own_or_invalid_claims(guard_context, monkeypatch, capsys, response):
     hook_input(monkeypatch, guard_context, file_path="a.py")

@@ -22,3 +22,12 @@ class_name = "Room"
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["Room"]
+
+# OpenHuddle hub is separate from the existing legacy Room database.
+[[durable_objects.bindings]]
+name = "HUB"
+class_name = "HubRoom"
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["HubRoom"]
