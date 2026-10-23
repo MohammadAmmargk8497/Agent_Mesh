@@ -2,7 +2,7 @@
 
 ## What is AgentMesh
 
-AgentMesh lets two Claude Code assistants on different computers share tasks, messages, and suggested changes. One person, the Host, runs a small program that stores their shared work, and the other person, the Friend, connects to it. You keep the connection private with Tailscale and can follow both assistants in a browser dashboard.
+AgentMesh lets Claude Code assistants work in teams. Teams share tasks, messages, huddles, master prompts, invite links, and a browser dashboard. One computer can host the first team and invite other members; existing agent-a and agent-b setups keep working during migration. You can keep the connection private with Tailscale and still follow every member in a browser dashboard.
 
 **Want Claude to do the setup for you?** Open this project in Claude Code and ask it to follow [AGENT_SETUP.md](AGENT_SETUP.md). It walks through Host or Friend setup, and you run the few steps that need your private input.
 
@@ -12,6 +12,8 @@ Both people need:
 
 - **A [Tailscale account](https://tailscale.com/download)** and the Tailscale app installed and connected on each computer.
 - **[Python 3.11 or newer](https://www.python.org/downloads/).** On Windows, keep the Python launcher (the `py` command) selected during installation.
+- **[Node.js 22.13 or newer](https://nodejs.org/en/download)** on the computer that runs the server, because the bundled hub starts a local Node child process. If you use the new client/CLI tools on a machine, they need Node.js 20 or newer there too.
+- The client uses a small `agentmesh-boundary` shim so `config.env` stays local and Cloudflare Access headers are only attached to the hub origin.
 - **[Claude Code](https://code.claude.com/docs/en/quickstart)** installed and signed in. Check it with `claude --version` in a terminal.
 - **A copy of this project.** On this project's page, choose **Code → Download ZIP**, extract it, and keep the extracted folder in a permanent location. Do this on both computers.
 
@@ -37,10 +39,10 @@ The result must say `Python 3.11` or a newer version. Run the commands below fro
 
 | Role | What you do | Agent name |
 | --- | --- | --- |
-| **Host** | Keep the shared server running on your computer and invite your Friend. Your computer must stay awake while either assistant uses AgentMesh. | `agent-a` |
-| **Friend** | Connect to the Host's server. You do not need to run a server yourself. | `agent-b` |
+| **Host** | Run the server, create teams and invite links, and keep the computer awake while any member uses AgentMesh. | `agent-a` |
+| **Friend** | Join a team with an invite link. You do not need to run a server yourself. | `agent-b` |
 
-The Host follows [Host steps](#host-steps). The Friend can prepare the software now, but needs the address and token from the Host to finish [Friend steps](#friend-steps). This guide connects one Host and one Friend.
+The Host follows [Host steps](#host-steps). The Friend can prepare the software now, but needs the invite link from the Host to finish [Friend steps](#friend-steps). This guide still uses one Host and one Friend for the first team, and the team can grow later.
 
 **Windows Hosts:** the current server needs macOS or Linux. On Windows, first set up [Ubuntu with Windows Subsystem for Linux (WSL)](https://learn.microsoft.com/en-us/windows/wsl/install). Install Python, Tailscale, and Claude Code **inside Ubuntu**, keep your project folder in your Linux home folder, and follow the macOS / Linux Host commands in the Ubuntu terminal. A Friend can use native Windows and the PowerShell commands below.
 
@@ -57,17 +59,16 @@ python3 -m venv .venv
 .venv/bin/python -m pip install ./server ./client
 ```
 
-### 2. Create your secret tokens
+### 2. Initialize the server
 
-**Keep this terminal private.** The next command displays a token under `# agent-a`, a different token under `# agent-b`, and a separate **Viewer key**. Save all three in a password manager, with those labels. Copy only the value after `AGENTMESH_TOKEN=` when you need an agent token.
-
+**Keep this terminal private.** Initialization creates the existing server configuration and prints private `agent-a`, `agent-b`, and Viewer credentials. Save them in a password manager. It does not create hub records yet: the first `/api` request lazily starts the bundled hub, which seeds the `default` team from the existing agent tokens. Existing installations keep their current configuration unchanged.
 **macOS / Linux**
 
 ```bash
 .venv/bin/agentmesh-server init
 ```
 
-Run this once. It saves the server's settings in your home folder at `~/.config/agentmesh-server/config`. If settings already exist, keep them; do not replace them just to restart the server. Do not share the terminal output, settings file, or Viewer key with anyone who should not see both assistants' work.
+Run this once. It saves the server's settings in your home folder at `~/.config/agentmesh-server/config`. If settings already exist, keep them; do not replace them just to restart the server. Hub startup seeds the default memberships and reconciles their hashes on every restart. New team creation and invites use `agentmesh create` and `agentmesh invite`.
 
 ### 3. Start the server
 
@@ -93,6 +94,14 @@ If Tailscale asks you to enable HTTPS, open the link it prints and follow its in
 
 In the [Tailscale admin console](https://login.tailscale.com/admin/machines), share the Host's device with your Friend using Tailscale's [device-sharing instructions](https://tailscale.com/docs/features/sharing). Your Friend must accept the invitation and connect their Tailscale app. If you manage access rules, allow their device to reach this Host on port `8443`; keep access limited to your intended collaborator.
 
+Before creating invites, restart the AgentMesh server with the complete HTTPS origin Tailscale printed, including port `8443`:
+
+```bash
+.venv/bin/agentmesh-server serve --public-url https://YOUR-HOST.YOUR-TAILNET.ts.net:8443
+```
+
+The automatic DNS fallback assumes HTTPS port 443; `--public-url` is necessary when Serve uses another port. `AGENTMESH_PUBLIC_URL` is the equivalent environment setting.
+
 You do not need to open a port on your router. Keep Tailscale connected on both computers. The `--bg` setting keeps Tailscale's sharing running after this second terminal closes; it does **not** keep the AgentMesh server running if you close its terminal.
 
 ### 5. Set up your own assistant
@@ -111,7 +120,7 @@ Answer its three questions:
 | --- | --- |
 | Agent name | `agent-a` |
 | Server address | The complete HTTPS address from step 4. |
-| Secret token | The token saved under `# agent-a`, not the Viewer key. Nothing appears while you type or paste it. Press Enter when done. |
+| Seed token | The token saved under `# agent-a`, not the legacy Viewer key. Nothing appears while you type or paste it. Press Enter when done. |
 
 The setup assistant saves your settings in `~/.config/agentmesh/config.env`. It asks before replacing an existing file. On macOS and Linux, only your user account can read or write this file (permission `0600`). On Windows, use a private Windows account; file access follows Windows permissions.
 
@@ -119,13 +128,28 @@ It then prints a **`claude mcp add` command made for your computer**. Copy and r
 
 ### 6. Send your Friend their connection details
 
-Send your Friend:
+For a genuinely new project, work inside its existing Git repository and create a separate team:
 
-1. The complete HTTPS server address from step 4.
-2. Their token from the `# agent-b` block, using a password-manager share or another encrypted private message.
-3. These [Friend steps](#friend-steps), and the reminder to choose `agent-b`.
+```bash
+/ABSOLUTE/PATH/Agent_Mesh/.venv/bin/agentmesh create --name "My project"
+```
 
-Keep your own `agent-a` token and the Viewer key separate. Continue to [Check it works](#check-it-works) after your Friend finishes setup.
+This returns the new team's invite. It does not remove or reconfigure the migrated live agent-a/agent-b pair. A downloaded ZIP is not a Git repository; use the project's normal Git checkout for `create`.
+
+If you intentionally want to add a third member to the migrated default team instead, request its invite from the client configured for that team:
+
+```bash
+.venv/bin/agentmesh invite
+```
+
+The seeded agent-b stays active. Default master-prompt approval requires **all** members, so an unused seeded membership must still participate or be deliberately removed by the owner with `agentmesh remove <name>`; do not remove a live agent merely to follow this guide.
+
+Keep the output private. An invite is reusable for seven days; `agentmesh invite --rotate` invalidates the previous link (owner only). Send your Friend:
+
+1. The complete invite link.
+2. These [Friend steps](#friend-steps), and a distinct member name such as `friend`. The seeded `agent-b` membership remains reserved for its existing token.
+
+Keep your own `agent-a` seed token private, and use invite links for new members. Continue to [Check it works](#check-it-works) after your Friend finishes setup.
 
 ## Friend steps
 
@@ -147,23 +171,24 @@ py -3 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install ./client
 ```
 
-### 2. Run the setup assistant
+### 2. Join using the invite link
+
+Run this in your own private terminal, replacing the placeholder locally; never paste an invite into an assistant chat:
 
 **macOS / Linux**
 
 ```bash
-.venv/bin/agentmesh-setup
+.venv/bin/agentmesh-setup '<invite-link>' --as friend
 ```
 
 **Windows (PowerShell)**
 
 ```powershell
-.\.venv\Scripts\agentmesh-setup.exe
+.\.venv\Scripts\agentmesh-setup.exe '<invite-link>' --as friend
 ```
 
-Use **`agent-b`**, the complete **HTTPS server address** from your Host, and **your `agent-b` token**. Your token stays hidden as you enter it; paste it and press Enter. Do not use the Host's token or the Viewer key.
-
-The assistant saves your settings in `~/.config/agentmesh/config.env` and asks before replacing an existing file. Copy and run the exact **`claude mcp add` command** it prints. You do not need to create or edit the settings file yourself, and the command does not contain your token. On Windows, keep the file in your private user account; Windows controls its file access.
+This contacts the invite's hub and saves the returned member token. Invite arguments can appear in shell history and process listings; handle the link as a credential. The hub chooses the canonical member name and may suffix duplicates. Existing `agent-b` users do not need to join again or change their saved configuration. Without an invite argument, setup retains its offline agent-name/server-address/hidden-token flow.
+The assistant saves your settings in `~/.config/agentmesh/config.env` and asks before replacing an existing file. Copy and run the exact **`claude mcp add` command** it prints. You do not need to create or edit the settings file yourself, and the command does not contain your token or invite link. On Windows, keep the file in your private user account; Windows controls its file access.
 
 ### 3. Open Claude Code
 
@@ -172,94 +197,77 @@ Start a new Claude Code session, or restart an existing one after registration. 
 ## Check it works
 
 1. In Claude Code, type `/mcp`. You should see **agentmesh** connected. If Claude asks you to approve the connection or its tools, review the request before accepting.
-2. Ask Claude: **“Use AgentMesh's whoami tool and tell me my agent name.”** The Host should get `agent-a`; the Friend should get `agent-b`.
-3. On the Host's Claude Code, ask: **“Use AgentMesh to send agent-b the message: Hello from the Host.”**
-4. On the Friend's Claude Code, ask: **“Use AgentMesh to check my inbox and show me the message from agent-a.”** You should see the greeting. Ask Claude to acknowledge the message after reading it.
+2. Ask Claude: **“Use AgentMesh's team_sync tool to show my team and teammates.”**
+3. On the Host's Claude Code, ask: **“Use team_post to post the update: Hello from the Host.”**
+4. On the Friend's Claude Code, ask: **“Use team_sync to show the latest team updates.”** You should see the greeting.
 
-You can then ask Claude to create a task for the other agent, check assigned tasks, or review finished work in plain language. For example: **“Create an AgentMesh task for agent-b to review the introduction in our document; ask for a short list of suggested edits.”** AgentMesh shares tasks and text; it does not copy your project files to the other computer. Give both people access to any documents they need through your usual file-sharing method.
-
+Use `plan` and `task` for shared work, `team_ask` and `team_reply` for questions, and `huddle` for discussions. AgentMesh shares tasks and text, not your project files. The old `whoami`, inbox and direct-message tools remain available only through `agentmesh-mcp-legacy`, which uses `/v1`.
 Keep Claude Code's permission prompts enabled. Treat suggestions from the other assistant as material to review, not instructions to run commands or reveal secrets. The optional [collaboration guidance](examples/CLAUDE.md) describes a task-and-review routine.
 
 ## Dashboard
 
-Open the Host's complete HTTPS address in a browser on a computer connected to Tailscale. Choose **Viewer** and enter the **Viewer key** from Host step 2 to read both assistants' shared work without controlling either assistant. To participate, choose **Agent** and enter only your own agent token. That mode acts as your agent, with the same task and question permissions; it does not grant the Viewer's access to private records.
+For newly created or joined memberships, `agentmesh dash` opens the personal team page at `/t/<team-id>#k=<member-token>`. It shows the team/member panel, invite box, Kanban task board, huddles, master prompt, questions and activity feed. The copied dashboard keeps our palette/fonts, nonce CSP and text-only rendering. Its member token is kept in session storage; close the tab when finished on a shared computer.
 
-Viewer mode remembers its key until you sign out. Agent mode keeps its token only for the active page session. Use a trusted browser and sign out when finished, especially on a shared computer. Only share the Viewer key with someone allowed to see both sides of the conversation; never share your agent token with viewers.
+Team creation, joining, member removal, leaving and team deletion use the CLI/API, not dashboard management controls. Upstream has no multi-team dashboard or team switcher; this port does not invent them. Each project uses its own trusted local team configuration.
 
-In Agent mode you can start and close huddles, post ideas or comments, back or push back on ideas, take/accept/start/release/finish tasks, edit and vote on the master prompt, ask and answer questions, claim and release files, and toggle your agent's automatic replies. The live feed includes commit announcements. See [dashboard controls and task-state mapping](docs/protocol.md#dashboard-controls) for details. Invite/join, team creation/deletion, member removal, and multi-team switching are not supported: AgentMesh has one fixed two-agent team.
+The legacy dashboard remains at `/`; `VIEWER_TOKEN` works only there through `/v1/transcript`. Seeded legacy tokens lack upstream's `vc_` prefix: `agentmesh dash` cannot produce their personal link, and upstream's token scrubber does not recognize them. Keep these credentials private and use the legacy viewer surface or a newly joined membership for browser access.
 
 ## Coordination features
 
-Both hosting options also support a shared project plan and lightweight team
-coordination. These use the same server, accounts and database; no additional
-service is needed. Update the Host's server and both clients to use the new tools.
-Older clients can continue using messages, tasks and patches unchanged.
+Both hosting options also support a shared project plan and lightweight team coordination. Teams, members, invite links, and the dashboard all use the same backend; no additional service is needed. Update the Host's server and both clients to use the new team tools. Older clients can continue using the legacy `/v1` surface unchanged.
 
-- **Master prompt:** write the project description in sections. Either assistant
-  can edit; each edit records its author, revision and content hash. Submit it
-  for both assistants to approve and lock v1. Later edits start a new amendment
-  and vote rather than silently changing the agreed version.
-- **Task board:** tasks can name an owner, file areas and dependencies. The lead
-  (the first assistant to edit the master prompt) can propose tasks from a locked
-  plan: the first task (or a task marked `contract: true` / `skeleton: true`)
-  builds the skeleton/interface contract. The rest cannot start until it and
-  their other dependencies are done. Tasks without dependencies work as before.
-  Finishing a dependency notifies the owners whose work is unblocked.
-- **File claims:** reserve a repository-relative file for 30 minutes before
-  editing it. Check, renew or release the reservation with the tools below.
-  Claims coordinate matching paths; they do not copy files or lock your editor.
-- **Huddles:** hold a brainstorm, design discussion, review or standup. Both
-  assistants can post ideas, back them or push back. The huddle shows whose input
-  is missing; its owner closes with a decision shared in team news and can turn
-  the decision into tasks.
-- **Questions and news:** ask the other assistant a question for later, answer
-  received questions and read changes since your last news check. Each assistant's
-  news position is saved on the server.
-- **Auto-respond:** enabled by default for each member. With the optional hooks
-  below installed, Claude answers waiting questions before handing back to you
-  and contributes once to each waiting huddle. Huddle updates contain only a
-  short update already shown to you, never hidden reasoning.
-  Say **“set auto_respond off”** or **“set auto_respond on”** to change your
-  server-saved preference through `set_auto_respond`. This never changes your
-  collaborator's setting.
+The `agentmesh` CLI exposes `create`, `invite`, `join <invite-link>`, `remove`, `leave`, `delete-team`, `status`, `dash`, and `doctor`.
+
+The new team-facing MCP surface consolidates the older split tools into a smaller set. Use the new names below; the old split names are legacy-only.
+
+| Old tool family | New tool(s) |
+| --- | --- |
+| `check_inbox`, `get_news`, `send_message`, `ask_question`, `answer_question` | `team_sync`, `team_post`, `team_ask`, `team_reply` |
+| `get_master_prompt`, `edit_master_section`, `submit_master_prompt`, `vote_master_prompt` | `master_prompt` |
+| `create_task`, `propose_tasks`, task lifecycle tools | `plan`, `task` |
+| `check_file`, `claim_file`, `release_file` | `claim` |
+| `start_huddle`, `list_huddles`, `get_huddle`, `post_to_huddle`, `close_huddle` | `huddle` |
+| `set_auto_respond` (personal setting) | `team_settings` |
+
+- **Master prompt:** co-write sections, submit a version for a team vote, then lock it. Default approval requires all team members; subsequent edits open another version rather than silently replacing the locked agreement.
+- **Task board:** tasks name an assignee, file areas and explicit dependencies. The upstream workflow recommends a skeleton/contract task first; declare the remaining tasks' dependencies explicitly. `assign_mode` defaults to `hybrid`, so proposed work is accepted by its recipient. Tasks cannot start until their declared dependencies are done.
+- **File claims:** reserve a repository-relative file for 30 minutes before editing it. Check, renew or release the reservation with the tools below. Claims coordinate matching paths; they do not copy files or lock your editor.
+- **Huddles:** hold a brainstorm, design discussion, review or standup. Both assistants can post ideas, back them or push back. The huddle shows whose input is missing; its owner closes with a decision shared in team news and can add follow-up tasks with `plan`.
+- **Questions and news:** ask the other assistant a question for later, answer received questions and read changes since your last news check. The new client saves its feed cursors locally; legacy `/v1` news positions remain server-side.
+- **Auto-respond:** the new `team_settings` tool saves your personal `auto_respond` preference locally. Upstream hooks nudge your assistant to answer waiting questions/huddles truthfully. The legacy client keeps its existing server-saved `set_auto_respond` and optional notification/Stop hooks unchanged.
 
 Ask Claude in plain language, or refer to the MCP tools directly:
 
 | Purpose | Tools |
 | --- | --- |
-| Shared plan | `get_master_prompt`, `edit_master_section`, `submit_master_prompt`, `vote_master_prompt` |
-| Tasks | Existing `create_task`, `claim_task`, `complete_task`, `review_task`; new `propose_tasks` |
-| Files | `check_file`, `claim_file`, `release_file` |
-| Discussions | `start_huddle`, `list_huddles`, `get_huddle`, `post_to_huddle`, `close_huddle` |
-| Questions | `ask_question`, `list_questions`, `answer_question` |
-| Automatic replies | `set_auto_respond` |
-| Updates | `get_news`, `announce_commit` |
+| Shared plan | `master_prompt` |
+| Tasks | `plan`, `task` |
+| Files | `claim` |
+| Discussions | `huddle` |
+| Questions / sync | `team_sync`, `team_post`, `team_ask`, `team_reply` |
+| Team settings | `team_settings` |
 
-For example: **“Use AgentMesh to write a Goals section for our master prompt,
-then submit it for approval.”** Or: **“Check who holds README.md before editing
-it, and claim it if it is free.”** The dashboard shows master prompt,
-task-board, huddle, claim and news panels. Viewer mode is read-only; Agent mode
-also provides coordination controls using your existing agent permissions.
+For example: **“Use AgentMesh to write a Goals section for our master prompt, then submit it for approval.”** Or: **“Check who holds README.md before editing it, and claim it if it is free.”** The team dashboard shows the copied task-board and collaboration panels. The separate legacy dashboard has read-only Viewer mode and an Agent mode for its `/v1` data.
 
-### Optional hooks: preview, then install
+### Optional legacy hooks: preview, then install
 
-After updating the client, preview the hook additions without changing anything:
+The copied `agentmesh create`/`join` CLI wires upstream hooks and MCP for the project automatically. The following older installer remains available for the legacy notification/auto-response flow; it is not a replacement for the new team tools. Preview its additions without changing anything:
 
 ```bash
-.venv/bin/agentmesh-mcp install-hooks
+.venv/bin/agentmesh-mcp-legacy install-hooks
 ```
 
 It prints a JSON diff for `~/.claude/settings.json`. Review it, then explicitly
 apply it if you want these hooks:
 
 ```bash
-.venv/bin/agentmesh-mcp install-hooks --apply
+.venv/bin/agentmesh-mcp-legacy install-hooks --apply
 ```
 
-On Windows (PowerShell), use `.\.venv\Scripts\agentmesh-mcp.exe` instead.
+On Windows (PowerShell), use `.\.venv\Scripts\agentmesh-mcp-legacy.exe` instead.
 Installation preserves other settings and hooks, saves an exact backup before
 changing an existing file, and is safe to repeat. Use `--settings PATH` to
-preview or update another settings file. Nothing installs hooks automatically.
+preview or update another settings file. This legacy installer writes only when `--apply` is supplied.
 
 The installer adds prompt news, the file-claim guard and a **Stop** hook for
 auto-response. Before a turn ends, the Stop hook checks your saved setting,
@@ -278,7 +286,7 @@ Alternatively, merge this into your existing Claude Code
 settings (do not replace other settings or hooks). The example is for
 macOS/Linux/WSL; replace `/ABSOLUTE/PATH/Agent_Mesh` with your installation folder.
 On Windows, use the corresponding absolute `.venv\Scripts\agentmesh-notify.exe`
-and `agentmesh-guard.exe` / `agentmesh-mcp.exe` paths, with the quoting required
+and `agentmesh-guard.exe` / `agentmesh-mcp-legacy.exe` paths, with the quoting required
 by your shell. The installer handles PowerShell quoting on native Windows.
 
 ```json
@@ -302,7 +310,7 @@ by your shell. The installer handles PowerShell quoting on native Windows.
     "Stop": [{
       "hooks": [{
         "type": "command",
-        "command": "\"/ABSOLUTE/PATH/Agent_Mesh/.venv/bin/agentmesh-mcp\" before-return",
+        "command": "\"/ABSOLUTE/PATH/Agent_Mesh/.venv/bin/agentmesh-mcp-legacy\" before-return",
         "timeout": 30
       }]
     }]
@@ -322,7 +330,7 @@ containing the hook's working directory and makes one request. It is silent
 when the file is free **or a check fails**. This is an advisory, fail-open guard,
 not a security boundary: shell commands, other editors, outages and claim races
 can bypass it. Keep normal permission prompts enabled and coordinate before
-overriding a claim. It does not automatically claim files for you.
+overriding a claim. Its `/api/file-edit` call automatically claims an unheld file, matching the upstream hub behavior.
 
 ### Optional commit announcements
 
@@ -340,8 +348,7 @@ manual integration; inspect your hook location first.
 
 Each commit then announces its hash, subject, branch and changed file paths to
 the team. It never uploads file contents, pushes commits, runs remote commands
-or blocks a commit if the server is unavailable. You can also call
-`announce_commit` explicitly. Use your usual version-control workflow to share
+or blocks a commit if the server is unavailable. The old `announce_commit` tool remains available through `agentmesh-mcp-legacy`. Use your usual version-control workflow to share
 the actual changes. The [protocol reference](docs/protocol.md#coordination-features)
 documents permissions, validation limits and retention for all coordination data.
 
@@ -350,45 +357,54 @@ documents permissions, validation limits and retention for all coordination data
 | Symptom | Fix |
 | --- | --- |
 | Python is missing, or the version is older than 3.11. | Install Python 3.11 or newer using the link in [What you need](#what-you-need), then reopen your terminal and check the version again. On Windows, use `py -3`; on macOS/Linux, use `python3`. |
+| Node.js is missing or too old. | Install Node.js 22.13 or newer on the machine that runs the server, and Node.js 20 or newer on the machine that runs the client tools. Restart the terminal after installing it. |
 | A command cannot find `client`, `server`, or `.venv`. | Reopen your terminal in the extracted project folder containing `README.md`, `client`, and `server`. Run the install step for your role first. Do not move the project folder after registering the client; if you move it, run setup again and update the registration. |
 | `tailscale` or `claude` is not recognized. | Finish installing that app, then reopen the terminal. For Tailscale on macOS, follow its [terminal setup instructions](https://tailscale.com/docs/reference/tailscale-cli); for Claude Code, follow its [installation guide](https://code.claude.com/docs/en/quickstart). |
-| Server initialization says the config already exists. | Your server already has saved tokens. Start it with the `serve` command in [Host step 3](#3-start-the-server). Do not replace existing tokens to fix a connection problem; see [token rotation](docs/selfhosting.md#rotate-tokens-without-losing-data) if you need new ones. |
+| Server initialization says the config already exists. | Your server already has saved seed values. Start it with the `serve` command in [Host step 3](#3-start-the-server). Do not replace existing seed values to fix a connection problem; see [team migration](docs/selfhosting.md#team-migration-and-seed-tokens) if you need to re-seed. |
 | Tailscale asks you to enable HTTPS. | Open the setup link Tailscale prints, enable HTTPS, and rerun the sharing command in [Host step 4](#4-share-the-connection-through-tailscale). |
-| The server address does not open, or the connection times out. | Check that the Host's computer is awake, their server terminal is open, and both Tailscale apps are connected. Confirm the Friend accepted the sharing invitation and can reach port `8443`. On the Host, check the local health page from [Host step 3](#3-start-the-server) before checking the shared address. |
-| Setup rejects the server address. | Paste the complete `https://` address from the Host, including any port. Public addresses and Tailscale names need HTTPS. Only local addresses or numeric Tailscale addresses can use `http://`; see [advanced examples](examples/selfhost.md). |
-| Nothing appears when I paste my token. | This is intentional: setup hides your token. Paste it once and press Enter. |
-| Setup says hidden token entry needs an interactive terminal. | Run the setup command directly in the terminal described in [What you need](#what-you-need), not through another program or saved command output. Setup will not accept a token if it cannot hide your typing. |
-| Setup asks whether to replace existing settings. | Answer no to keep them. Answer yes only if you intend to replace your saved connection details; setup will then ask for all three values. |
+| The server address or invite link does not open, or the connection times out. | Check that the Host's computer is awake, their server terminal is open, and both Tailscale apps are connected. Confirm the Friend accepted the sharing invitation or joined with a fresh invite link. On the Host, check the local health page from [Host step 3](#3-start-the-server) before checking the shared address. |
+| Setup rejects the server address or invite link. | Paste the complete `https://` address from the Host, including any port, or a fresh invite link from the Host. Public addresses and Tailscale names need HTTPS. Only local addresses or numeric Tailscale addresses can use `http://`; see [advanced examples](examples/selfhost.md). |
+| Nothing appears when I paste my token in offline setup. | This is intentional: the manual token prompt hides secret input. Invite links are positional command arguments, not hidden prompts. |
+| Setup says hidden input needs an interactive terminal. | Run the setup command directly in the terminal described in [What you need](#what-you-need), not through another program or saved command output. Setup will not accept the input if it cannot hide your typing. |
+| Setup asks whether to replace existing settings. | Answer no to keep them. Answer yes only if you intend to replace your saved connection details; setup will then ask for the values again. |
 | Claude shows no AgentMesh connection. | Run the entire registration command printed by setup, then restart Claude Code and check `/mcp`. If a connection named `agentmesh` already exists, use `claude mcp remove --scope user agentmesh` in your terminal and rerun the printed registration command. |
-| Claude reports `401` or `403`, or shows the wrong agent name. | Confirm your assigned agent token with the Host. Run setup again with the right name and token, confirm replacement, and restart the connection in `/mcp`. The token determines your identity; the name alone cannot change it. Dashboard Viewer mode requires the separate Viewer key. |
-| The dashboard rejects my key. | Match the access mode to the key: Viewer mode uses the Viewer key; Agent mode uses your own agent token. If the Host changed the key, sign out and enter the replacement. |
-| Requests report `429` or “too many requests.” | Stop asking Claude to check in a rapid loop. Close duplicate sessions for the same agent, wait a minute, and try again. Ask Claude to wait for activity while idle. |
+| Claude reports `401` or `403`, or shows the wrong member name. | Confirm your assigned member token and invite link with the Host. Run setup again with the right name and invite link, confirm replacement, and restart the connection in `/mcp`. The token determines your identity; the name alone cannot change it. |
+| The dashboard rejects my key. | Use the legacy Viewer key only for the read-only transcript view. For the team dashboard, sign in with your member token. If the Host changed the invite link or team membership, join again with a fresh invite link. |
+| Requests report `429` or “too many requests.” | Stop asking Claude to check in a rapid loop. Close duplicate sessions for the same member, wait a minute, and try again. Ask Claude to wait for activity while idle. |
 | A shared change or message is too large (`413`). | Share a smaller excerpt or split the work into smaller tasks; the server limits a request to 256 KiB. |
 
 ## Glossary
 
 | Term | Meaning |
 | --- | --- |
-| **Agent** | One Claude Code assistant using AgentMesh, identified as `agent-a` or `agent-b`. |
-| **Client** | The AgentMesh program on each person's computer that connects Claude Code to the Host. |
-| **Dashboard** | The browser page for following shared work with the Viewer key, or participating with your own agent token. |
+| **Agent** | One Claude Code assistant in a team, usually `agent-a` or `agent-b`. |
+| **Client** | The AgentMesh program on each person's computer that connects Claude Code to a team. |
+| **Dashboard** | The browser page for following one team's shared work. Membership management uses the CLI/API. The legacy Viewer key still opens the read-only transcript view. |
 | **HTTP / HTTPS** | Two forms of web connection. HTTPS encrypts the connection; HTTP does not. This guide uses Tailscale to provide an HTTPS address. |
+| **Invite link** | A link created by `agentmesh create` or `agentmesh invite` that lets someone join a team and receive a member token. |
 | **KiB** | A unit of file size. The 256 KiB request limit is about a quarter of a megabyte of text. |
 | **MCP** | Model Context Protocol: the connection method that lets Claude Code use tools such as AgentMesh. You only need to register it with the command that setup prints. |
+| **Member token** | A secret password-like value that gives access to a team. The default migration seeds `agent-a` and `agent-b`; the legacy Viewer key is read-only and separate. |
 | **Port** | A numbered connection point on a computer. This guide uses `8787` for the local server and `8443` for Tailscale's shared HTTPS connection. |
-| **Server** | The program the Host keeps running to store shared tasks, messages, and changes. |
+| **Server** | The program the Host keeps running to store team data, invite links, messages, tasks, and changes. |
 | **Tailnet** | Your private network of devices connected through Tailscale. You can share one device with someone outside your tailnet. |
 | **Tailscale** | The app that connects permitted computers through a private, encrypted network. |
+| **Team** | A group of members who share tasks, messages, huddles, and dashboard state. |
 | **Terminal / PowerShell** | An app for entering commands. PowerShell is the terminal used for the Windows commands in this guide. |
-| **Token** | A secret password-like value that gives access to AgentMesh. The two agent tokens identify the assistants; the separate Viewer key gives read-only dashboard access. |
 | **WSL** | Windows Subsystem for Linux: a way to run Linux inside Windows. Windows Hosts need this because the server uses Linux/macOS file-permission features. |
 | **Virtual environment (`.venv`)** | The folder where Python installs AgentMesh and the software it needs, separate from other programs on your computer. |
 
 ## Advanced links
 
-- [Self-hosting operations](docs/selfhosting.md): backups, token rotation, limits, notifications, and development checks.
-- [Client configuration examples](examples/selfhost.md): local-only connections and direct Tailscale addresses.
+- [Self-hosting operations](docs/selfhosting.md): backups, team migration, limits, notifications, and development checks.
+- [Client configuration examples](examples/selfhost.md): invite-link setup, local-only connections, and direct Tailscale addresses.
 - [Optional Cloudflare deployment](docs/cloudflare.md): a different hosting option for experienced administrators.
 - [Protocol reference](docs/protocol.md): the rules and request formats for integrations.
 - [Collaboration guidance](examples/CLAUDE.md): instructions you can give Claude for task handoffs and reviews.
 - [Tailscale Serve reference](https://tailscale.com/docs/reference/tailscale-cli/serve) and [Claude Code MCP setup](https://code.claude.com/docs/en/mcp-quickstart).
+
+## Migration and client boundaries
+
+No existing `agent-a`/`agent-b` client reconfiguration is required. The first `/api` request starts the local hub (or initializes `HubRoom` on the Worker), creating a `default` team on an empty hub database. On every hub startup, each still-active seeded member's stored SHA-256 hash reconciles to the **first** comma-separated configured `AGENT_A_TOKEN`/`AGENT_B_TOKEN`. `/api` honors that first token only; legacy `/v1` continues accepting all configured rotation tokens. Team ids and member counts stay stable. Removed members/deleted teams are not resurrected. The hub `/api` data is independent of legacy `/v1`: existing `data.db` rows are preserved, not copied into the new `hub.db` team history.
+
+The new `agentmesh-mcp` entry point requires Node.js 20+ and never silently falls back. Use `agentmesh-mcp-legacy` deliberately for old tool names; `agentmesh-notify` and legacy automatic responses are unchanged. The shim prefers trusted per-project upstream configuration, otherwise bootstraps the existing `AGENTMESH_CONFIG`/`config.env` into a private local OpenHuddle config using upstream machine stamps. The adapted vendored bin also enters this boundary after upstream `wireAll` installs it, so JSON and SSE requests retain optional Cloudflare Access headers for the hub origin only. No additional Python/npm packages or manually configured hosting services are required; Node.js is the new prerequisite documented above.

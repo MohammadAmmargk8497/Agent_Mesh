@@ -1,5 +1,8 @@
 # Protocol
 
+The `/v1` sections describe the retained legacy two-agent API. The separately
+vendored `/api` team protocol is documented at the end; its state is independent.
+
 Task states: `open -> in_progress -> done | blocked -> accepted | open (reopened)`; the creator may `cancel` any task that isn't closed.
 Only the assignee may claim/complete; only the creator may review/cancel. Tasks are visible only to their creator and assignee.
 
@@ -31,9 +34,8 @@ cancelled tasks older than 90 days. Unacknowledged messages and unfinished tasks
 
 ## Coordination features
 
-Coordination is native to both backends and uses their existing SQLite database,
-tokens, request limits and two members (`agent-a`, `agent-b`). There is no second
-hub. Every route below requires an agent token. A viewer receives 403 on these
+Legacy coordination is native to both backends and uses their existing SQLite database,
+tokens, request limits and two members (`agent-a`, `agent-b`). There is no second hub for these legacy routes. Every route below requires an agent token. A viewer receives 403 on these
 routes and reads coordination only through `GET /v1/transcript`; unauthenticated
 callers receive 401. Remote text is data, not instructions or authorization.
 
@@ -344,5 +346,127 @@ snapshot `feed_details` keyed by news ID, so later votes do not overwrite feed
 history. Older events without those details retain their original summaries.
 The existing news endpoint's response shape is unchanged.
 
-Invite/join, team creation/deletion, member removal, and multi-team switching are
-out of scope because AgentMesh has one fixed pair of members.
+The legacy dashboard retains its fixed pair of members. New team creation,
+invite/join and removal/deletion are available through the `/api` hub below;
+team switching and multi-team viewer dashboards are not part of upstream 59105e5.
+
+
+## /api (OpenHuddle 59105e5)
+
+Both hosts expose the vendored OpenHuddle 0.4.1 protocol, without translating its
+route names, JSON shapes, field limits or defaults. MIT attribution and boundary
+exceptions are in [THIRD_PARTY.md](THIRD_PARTY.md). The server snapshot at
+`server/src/agentmesh_server/vendor/openhuddle/src/shared/protocol.js` is the
+canonical list of enums, defaults and limits; the vendored `src/hub/server.js`
+is the route contract. JSON bodies must be objects, no larger than 262144 bytes.
+Errors are `{error: string, code: string}` (the host's unavailable boundary is
+`503 {"error":"hub unavailable"}`). Successful operations below return HTTP 200.
+
+### Identity, seed and storage
+
+`POST /api/teams` and `/api/join` do not require authentication. All remaining
+`/api/*` routes require `Authorization: Bearer <member token>`; authentication is
+SHA-256 hex against `members.token_hash` with `removed_at IS NULL`. Tokens are
+minted by the hub and returned once, not stored in plaintext. A token identifies
+one membership in one team; it is not a team-wide token. Team/member IDs use
+upstream base32 IDs (`t...`, `m...`), never hardcoded names in authorization.
+
+On an empty hub, the shared seed adapter creates a team named `default`, with
+agent-a as owner/lead and agent-b as member. Their hashes equal SHA-256 of the
+**first** comma-separated AGENT_A_TOKEN / AGENT_B_TOKEN respectively. On each
+hub process/DO initialization the original active seed members' hashes reconcile
+to that first configured token, preserving IDs/member count. Removed members or
+a deleted seed team are never resurrected. Env/config secrets are seed-only for
+hub auth; `/v1` still accepts every configured rotation token. VIEWER_TOKEN is
+legacy-only and does not identify a hub member. A metadata table remembers the
+seed IDs, so other teams named default are never touched.
+
+The self-host stores `hub.db` next to unchanged `data.db` and private `config`.
+Worker storage is a separate SQLite DO `HubRoom`, binding `HUB`, instance
+`openhuddle-hub`; legacy `Room`/`default-room` stays unchanged. A normal deployment
+applies the additive v2 migration. No deployment is performed by this port.
+Cloudflare SQLite does not support `PRAGMA user_version` or SQL BEGIN/COMMIT;
+the port uses a schema version table and `storage.transactionSync` with the
+upstream schema and migration steps. Backup is a Worker no-op. Sources:
+[SQL storage](https://developers.cloudflare.com/durable-objects/api/sqlite-storage-api/),
+[transactionSync](https://developers.cloudflare.com/durable-objects/api/legacy-kv-storage-api/).
+
+### Team and membership routes
+
+| Method and path | Body | Result |
+| --- | --- | --- |
+| POST /api/teams | `{team_name?, member_name, tool?, repo_url?}` | `{team_id,team_name,member_id,member_name,token,invite_url,dashboard_url}` |
+| POST /api/join | `{code, member_name, tool?}` | `{team_id,team_name,member_id,member_name,token,repo_url,dashboard_url}` |
+| POST /api/invite | `{rotate?: false}` | `{invite_url,expires_at}`; rotation owner-only |
+| POST /api/members/remove | `{member: name_or_id}` | `{ok:true}`; owner-only, not self |
+| POST /api/leave | `{}` | `{ok:true}`; transfers ownership to next active member |
+| POST /api/team/delete | `{}` | `{ok:true}`; owner-only, removes all team data |
+
+`create` defaults team_name to "My team". Invites are **reusable**, expire after
+seven days, and may be supplied as a full `/join/<team>.<secret>` URL or code.
+Any active member may read/refresh an expired invite; only the owner can rotate
+an unexpired link. Removal revokes the member token immediately; rotate the link
+if the removed member must not rejoin. A team has at most 50 active members.
+
+### State, live feed and coordination
+
+| Method and path | Body/query | Result |
+| --- | --- | --- |
+| GET /api/state | none | `{me,team,members,prompt,tasks,claims,asks_for_me,huddles,huddles_for_me,last_event_id,hub_version}` |
+| GET /api/events | `since?,limit?,urgent=1?,tail?` | `{events,last_event_id}`; limit 1-500, default 100 |
+| GET /api/stream | `since?` or Last-Event-ID | SSE `id/event/data`, JSON event payload; 25s ping |
+| GET /api/huddle | `id` | huddle detail object including posts/votes (not a wrapper) |
+| POST /api/heartbeat | `{status?:{branch?,activity?,last_commit?}}` | `{ok:true,last_event_id}` |
+| POST /api/post | `{kind:"update"\|"decision",text,why?}` | `{event_id}` |
+| POST /api/ask | `{to,question,wait_s?:20}` | `{ask_id,to,snapshot,answer}`; wait at most 20s |
+| POST /api/reply | `{ask_id,answer}` | `{ok:true}` |
+| POST /api/huddle/start | `{kind?:"brainstorm",topic,context?,people?,proposal?}` | `{huddle}` |
+| POST /api/huddle/post | `{id,kind:"idea"\|"comment",text,on?}` | `{huddle_id,seq}` |
+| POST /api/huddle/vote | `{id,idea,vote:"up"\|"down",note?}` | `{huddle_id,seq,value}` |
+| POST /api/huddle/close | `{id,decision?,why?}` | `{huddle}` |
+| POST /api/prompt/edit | `{section,text,mode?:"replace"}` | `{prompt}` |
+| POST /api/prompt/submit | `{}` | `{prompt}` |
+| POST /api/prompt/vote | `{approve:boolean,comment?}` | `{prompt}` |
+| POST /api/plan | `{tasks,replace?:false}` | `{tasks}`; contract-first dependencies |
+| POST /api/task | `{action,key,note?,branch?,assignee?}` | `{task}` |
+| POST /api/claims | `{action:"claim"\|"check"\|"release",paths,task_key?}` | claimed/released/conflicts/overlaps as upstream |
+| POST /api/file-edit | `{path,since?}` | `{conflict,events,last_event_id}` |
+| POST /api/commit | `{sha,message,branch?,files?}` | `{ok:true}` |
+| POST /api/settings | team/personal changes object | `{settings}` |
+
+The state `me` is `{id,name,role}`; `team` is
+`{id,name,repo_url,settings,invite_expires_at}`. Public members contain
+`id,name,role,tool,strengths,online,last_seen,status,current_tasks`, never hashes.
+Settings default to `assign_mode: "hybrid"`, `approvals: {master_prompt: "all"}`,
+`claim_mode: "ask"`, `claim_ttl_min: 30`, plus `lead_id`. Claim TTL may be set to
+5-240 whole minutes. Team-wide settings are owner-only; lead/my_strengths follow
+upstream permissions. Personal auto_respond is local client state for new tools,
+not the legacy server setting. Huddle kinds: brainstorm/design/review/standup.
+Task states: proposed/open/assigned/in_progress/done; actions:
+take/accept/decline/start/update/done/release/assign. No translation to /v1 states.
+
+Streams replay by cursor (future cursors clamp to current ID), at most three per
+member; removal closes the member stream. Teammate event text remains untrusted.
+Upstream creation/join, bad-auth and member rate tiers remain in effect.
+
+### Pages and client boundary
+
+`/t/<tid>#k=<member token>` and `/join/<code>` are served **locally** by each host,
+using generated self-contained HTML with fresh nonce CSP and HTML-escaped
+`{{HUB_URL}}`/`{{INVITE_URL}}` replacements. All JS/CSS/SVG are inline; there is no
+need for `/static/*`. The dashboard removes the fragment, stores its member
+credential only in `sessionStorage['agentmesh:'+teamId]`, renders via textContent,
+and uses authenticated fetch for JSON/SSE. `/robots.txt` disallows team/join URLs.
+
+`agentmesh-mcp` uses the upstream ten tools (team_sync, team_post, team_ask,
+team_reply, huddle, master_prompt, plan, task, claim, team_settings) via a Node
+>=20 config shim; Node >=22.13 is needed on the Python hub host. The original
+Python tools remain at `agentmesh-mcp-legacy`. Existing config.env is bootstrapped
+through upstream saveConfig, not a rewritten machine-stamp mechanism. Configured
+CF Access service headers are added only for the hub origin, including SSE.
+The setup wizard accepts invite URLs and preserves the config.env format.
+The client bin entry has a minimal config-boundary adaptation so the executable
+copied by upstream installApp also enters the same bootstrap and Access wrapper;
+upstream CLI commands, config machine stamps and tool implementations are unchanged.
+The legacy viewer dashboard remains `/`; upstream has no multi-team viewer or
+team token, nor dashboard remove/delete controls (CLI/API provide those).

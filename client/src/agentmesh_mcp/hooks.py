@@ -15,10 +15,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-import httpx
-
 MARKER = "# AgentMesh post-commit hook"
-MEMBERS = ("agent-a", "agent-b")
 
 
 def _settings_path(path: str) -> Path:
@@ -220,20 +217,17 @@ def guard() -> None:
         root = _root(cwd)
         candidate = Path(path)
         relative = (candidate if candidate.is_absolute() else cwd / candidate).resolve().relative_to(root).as_posix()
-        result = _api("GET", f"/v1/claims?{httpx.QueryParams(path=relative)}")
-        # The authenticated identity returned by this new route is authoritative;
-        # configured display names must not bypass another member's file claim.
-        identity = result.get("agent")
-        if identity not in MEMBERS:
+        result = _api("POST", "/api/file-edit", {"path": relative})
+        # Upstream returns only another member's conflict, never our own claim.
+        conflict = result.get("conflict")
+        if not isinstance(conflict, dict):
             return
-        for claim in result.get("claims", []):
-            holder = claim.get("agent")
-            if holder not in MEMBERS or holder == identity:
-                continue
-            mode = "deny" if os.environ.get("AGENTMESH_CLAIM_MODE") == "deny" else "ask"
-            print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": mode,
-                              "permissionDecisionReason": f"AgentMesh: {holder} holds this file. Coordinate with them or wait for the claim to expire before editing."}}))
+        holder = conflict.get("member_name")
+        if not isinstance(holder, str) or not re.fullmatch(r"[\w .@-]{1,60}", holder):
             return
+        mode = "deny" if os.environ.get("AGENTMESH_CLAIM_MODE") == "deny" else "ask"
+        print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": mode,
+                          "permissionDecisionReason": f"AgentMesh: {holder} holds this file. Coordinate with them or wait for the claim to expire before editing."}}))
     except Exception:  # noqa: BLE001 - optional editing guards must fail open on any error.
         # A disconnected hub must not block local editing.
         return
@@ -266,12 +260,12 @@ def commit_hook(argv: list[str] | None = None) -> None:
             _install()
         elif not args:
             payload: dict[str, Any] = {"sha": _git("rev-parse", "HEAD"),
-                                       "subject": _git("log", "-1", "--format=%s"),
+                                       "message": _git("log", "-1", "--format=%s"),
                                        "branch": _git("rev-parse", "--abbrev-ref", "HEAD")}
             # NUL separators preserve spaces and newlines without shell parsing.
             files = _git("diff-tree", "--root", "--no-commit-id", "--name-only", "-r", "-z", "HEAD")
             payload["files"] = [path for path in files.split("\0") if path][:50]
-            _api("POST", "/v1/commits", payload)
+            _api("POST", "/api/commit", payload)
     except Exception:  # noqa: BLE001 - an optional announcer must never fail a commit.
         return
 

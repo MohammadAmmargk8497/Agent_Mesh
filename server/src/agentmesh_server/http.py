@@ -1,8 +1,8 @@
 """HTTP/1.1 transport for the AgentMesh Worker-compatible API."""
 
 import base64
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from importlib.resources import files
+import html
+import http.client
 import ipaddress
 import json
 import logging
@@ -11,11 +11,14 @@ import re
 import secrets
 import socket
 import time
-from urllib.parse import parse_qs, urlsplit
 import uuid
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from importlib.resources import files
+from urllib.parse import parse_qs, urlsplit
 
 from . import coordination
 from .config import load_config
+from .hub import HubSupervisor, HubUnavailable
 from .state import AGENTS, MAX_WAIT_S, MAX_WAITERS_PER_AGENT, State, now_ms
 
 MAX_BODY = 256 * 1024
@@ -106,12 +109,15 @@ class AgentMeshHTTPServer(ThreadingHTTPServer):
         try:
             super().server_close()
         finally:
+            if getattr(self, "hub", None) is not None:
+                self.hub.close()
             if getattr(self, "state", None) is not None:
                 state, self.state = self.state, None
                 state.close()
 
 
-def create_server(config_dir=None, host="127.0.0.1", port=8787, allow_remote_bind=False):
+def create_server(config_dir=None, host="127.0.0.1", port=8787, allow_remote_bind=False,
+                  *, hub=True, public_url=None):
     """Create a bound server; call serve_forever(), then server_close()."""
     if not allow_remote_bind and not _loopback_bind(host):
         raise ValueError("non-loopback bind requires --allow-remote-bind")
@@ -128,6 +134,8 @@ def create_server(config_dir=None, host="127.0.0.1", port=8787, allow_remote_bin
         state.close()
         raise
     server.state = state
+    server.hub = HubSupervisor(config_dir, config, *server.server_address[:2],
+                               enabled=hub, public_url=public_url)
     return server
 
 
@@ -261,12 +269,86 @@ class Handler(BaseHTTPRequestHandler):
                "img-src 'self' data:; base-uri 'none'; frame-ancestors 'none'")
         self._send(html, 200, "text/html; charset=utf-8", {"Content-Security-Policy": csp})
 
+    def _hub_page(self, path):
+        hub = self.server.hub
+        hub.available()
+        if re.fullmatch(r"/t/[a-z0-9]+", path):
+            name = "hub_dashboard.html"
+        elif re.fullmatch(r"/join/[a-z0-9]+\.[A-Za-z0-9_-]+", path):
+            name = "hub_join.html"
+        else:
+            raise HttpError(404, "not found")
+        nonce = base64.b64encode(secrets.token_bytes(16)).decode("ascii")
+        page = files("agentmesh_server").joinpath(name).read_text(encoding="utf-8")
+        for key, value in (("HUB_URL", hub.public_url), ("INVITE_URL", hub.public_url + path)):
+            page = page.replace("{{" + key + "}}", html.escape(value, quote=True))
+        page = page.replace("__AGENTMESH_NONCE__", nonce)
+        csp = (f"default-src 'none'; script-src 'nonce-{nonce}'; "
+               f"style-src 'nonce-{nonce}' https://fonts.googleapis.com; "
+               "font-src https://fonts.gstatic.com; connect-src 'self'; "
+               "img-src 'self' data:; base-uri 'none'; frame-ancestors 'none'")
+        self._send(page.encode(), 200, "text/html; charset=utf-8", {
+            "Content-Security-Policy": csp, "Referrer-Policy": "no-referrer", "X-Frame-Options": "DENY",
+        })
+
+    def _hub_proxy(self):
+        endpoint = self.server.hub.endpoint()
+        connection = http.client.HTTPConnection(endpoint.hostname, endpoint.port, timeout=35)
+        hop = {"connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
+               "te", "trailer", "transfer-encoding", "upgrade", "host", "content-length",
+               "x-forwarded-for"}
+        hop.update(value.strip().lower() for value in self.headers.get("Connection", "").split(","))
+        headers = {name: value for name, value in self.headers.items() if name.lower() not in hop}
+        headers["X-Forwarded-For"] = self.client_address[0]
+        try:
+            connection.request(self.command, self.path, self.body, headers)
+            response = connection.getresponse()
+            streaming = response.getheader("Content-Type", "").split(";", 1)[0] == "text/event-stream"
+            self.send_response(response.status)
+            response_hop = {"connection", "keep-alive", "transfer-encoding", "trailer", "upgrade"}
+            for name, value in response.getheaders():
+                if name.lower() not in response_hop:
+                    self.send_header(name, value)
+            # http.client decodes upstream chunks. Close-delimiting also keeps SSE
+            # unbuffered, rather than inventing a Content-Length or accumulating it.
+            if streaming or response.getheader("Content-Length") is None:
+                self.close_connection = True
+                self.send_header("Connection", "close")
+            self.end_headers()
+            if self.command != "HEAD":
+                while True:
+                    chunk = response.read1(65536)
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
+                    self.wfile.flush()
+        except (OSError, http.client.HTTPException):
+            self.close_connection = True
+            # Once headers are sent (especially an SSE response), do not emit a
+            # second HTTP response into the stream.
+            if "response" not in locals():
+                raise HubUnavailable("hub unavailable") from None
+        finally:
+            connection.close()
+
     def _handle(self):
         try:
             self.body = self._read_body()
             url = urlsplit(self.path)
             if self.command == "GET" and url.path in ("/", "/index.html"):
                 self._dashboard()
+                return
+            if url.path == "/api" or url.path.startswith("/api/"):
+                self._hub_proxy()
+                return
+            if url.path in ("/t", "/join") or url.path.startswith(("/t/", "/join/")):
+                if self.command not in ("GET", "HEAD"):
+                    raise HttpError(404, "not found")
+                self._hub_page(url.path)
+                return
+            if url.path == "/robots.txt" and self.command in ("GET", "HEAD"):
+                self._send(b"User-agent: *\nDisallow: /t/\nDisallow: /join/\n", 200,
+                           "text/plain; charset=utf-8")
                 return
             state = self.server.state
             if state is None or state.stop.is_set():
@@ -306,6 +388,8 @@ class Handler(BaseHTTPRequestHandler):
                     if transaction:
                         state.db.commit()
             self._json(data, status)
+        except HubUnavailable:
+            self._json({"error": "hub unavailable"}, 503)
         except (HttpError, coordination.CoordinationError) as exc:
             # Invalid framing/body may leave unread bytes: never reuse it as
             # the next request on this connection.

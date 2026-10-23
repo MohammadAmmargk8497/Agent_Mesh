@@ -30,7 +30,8 @@ const worker = load('index', {
   'cloudflare:workers': { DurableObject: class {
     constructor(ctx, env) { this.ctx = ctx; this.env = env; }
   } },
-  './dashboard.html': { default: '' }, './coordination': coordination,
+  './dashboard.html': { default: '' }, './hub_dashboard.html': { default: '' },
+  './hub_join.html': { default: '' }, './openhuddle/hub-room': { HubRoom: class {} }, './coordination': coordination,
 });
 const db = new DatabaseSync(':memory:');
 const sql = { exec(query, ...args) {

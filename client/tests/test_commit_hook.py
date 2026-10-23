@@ -31,7 +31,7 @@ def test_commit_announces_metadata_with_bounded_shell_free_subprocesses(monkeypa
     monkeypatch.setattr(hooks.subprocess, "run", run)
     monkeypatch.setattr(hooks, "_api", lambda *args: posts.append(args) or {})
     assert hooks.commit_hook([]) is None
-    assert posts == [("POST", "/v1/commits", {"sha": "a" * 40, "subject": "Implement contract", "branch": "main", "files": ["src/a b.py", "README.md"]})]
+    assert posts == [("POST", "/api/commit", {"sha": "a" * 40, "message": "Implement contract", "branch": "main", "files": ["src/a b.py", "README.md"]})]
     assert [call[0] for call in calls] == [
         ["git", "rev-parse", "HEAD"], ["git", "log", "-1", "--format=%s"],
         ["git", "rev-parse", "--abbrev-ref", "HEAD"],

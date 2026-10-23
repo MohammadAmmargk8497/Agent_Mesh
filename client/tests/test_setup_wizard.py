@@ -243,3 +243,71 @@ def test_help_needs_no_input_or_settings(monkeypatch, tmp_path, capsys):
     assert error.value.code == 0
     assert list(tmp_path.iterdir()) == []
     assert "--config-dir" in capsys.readouterr().out
+
+
+def test_invite_setup_uses_hub_identity_and_same_private_config(monkeypatch, tmp_path, capsys):
+    calls = []
+    token = "vc_synthetic-joined-token-" + "x" * 40
+
+    def join(link, name):
+        calls.append((link, name))
+        return "new-teammate", "https://synthetic.example.invalid", token
+
+    monkeypatch.setattr(setup_wizard, "_join_invite", join)
+    setup_wizard.main(["https://synthetic.example.invalid/join/tabcdef.secret", "--as", "new-teammate",
+                       "--config-dir", str(tmp_path)])
+    path = tmp_path / "config.env"
+    assert path.read_text() == ("AGENTMESH_URL=https://synthetic.example.invalid\n"
+                                f"AGENTMESH_TOKEN={token}\nAGENTMESH_AGENT_NAME=new-teammate\n")
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    assert calls == [("https://synthetic.example.invalid/join/tabcdef.secret", "new-teammate")]
+    output = capsys.readouterr()
+    assert token not in output.out + output.err and "Joined the team" in output.out
+
+
+def test_invite_exchange_matches_upstream_json_and_access_headers(monkeypatch):
+    import json
+
+    import httpx
+
+    token = "vc_synthetic-joined-token-" + "x" * 40
+    access_id, access_secret = "synthetic-id-" + "i" * 40, "synthetic-secret-" + "s" * 40
+    calls = []
+
+    def handle(request):
+        calls.append(request)
+        return httpx.Response(200, json={"token": token, "member_name": "new-teammate"})
+
+    original = httpx.Client
+    monkeypatch.setattr(setup_wizard.httpx, "Client", lambda **kw: original(transport=httpx.MockTransport(handle), **kw))
+    monkeypatch.setenv("AGENTMESH_CF_ACCESS_CLIENT_ID", access_id)
+    monkeypatch.setenv("AGENTMESH_CF_ACCESS_CLIENT_SECRET", access_secret)
+    assert setup_wizard._join_invite("https://synthetic.example.invalid/join/tabcdef.secret", "new-teammate") == (
+        "new-teammate", "https://synthetic.example.invalid", token)
+    assert len(calls) == 1
+    request = calls[0]
+    assert str(request.url) == "https://synthetic.example.invalid/api/join"
+    assert json.loads(request.content) == {"code": "tabcdef.secret", "member_name": "new-teammate", "tool": "agentmesh"}
+    assert request.headers["CF-Access-Client-Id"] == access_id
+    assert request.headers["CF-Access-Client-Secret"] == access_secret
+
+
+@pytest.mark.parametrize("link", ["https://user:password@synthetic.invalid/join/tabc.secret",
+                                  "http://public.invalid/join/tabc.secret", "https://synthetic.invalid/no-invite",
+                                  "https://synthetic.invalid/join/tabc.secret?redirect=evil"])
+def test_invite_rejects_unsafe_links_before_network(monkeypatch, link):
+    monkeypatch.setattr(setup_wizard.httpx, "Client", lambda **kw: pytest.fail("unsafe invite must not contact a hub"))
+    with pytest.raises(ValueError):
+        setup_wizard._join_invite(link, "new-teammate")
+
+
+def test_join_failure_saves_nothing_and_does_not_print_hub_error(monkeypatch, tmp_path, capsys):
+    def unavailable(*args):
+        raise ValueError("malicious secret response")
+
+    monkeypatch.setattr(setup_wizard, "_join_invite", unavailable)
+    with pytest.raises(SystemExit):
+        setup_wizard.main(["https://synthetic.invalid/join/tabc.secret", "--as", "new-teammate", "--config-dir", str(tmp_path)])
+    assert not (tmp_path / "config.env").exists()
+    output = capsys.readouterr()
+    assert "malicious secret response" not in output.out + output.err
