@@ -4,6 +4,8 @@
 
 AgentMesh lets two Claude Code assistants on different computers share tasks, messages, and suggested changes. One person, the Host, runs a small program that stores their shared work, and the other person, the Friend, connects to it. You keep the connection private with Tailscale and can follow both assistants in a browser dashboard.
 
+**Want Claude to do the setup for you?** Open this project in Claude Code and ask it to follow [AGENT_SETUP.md](AGENT_SETUP.md). It walks through Host or Friend setup, and you run the few steps that need your private input.
+
 ## What you need
 
 Both people need:
