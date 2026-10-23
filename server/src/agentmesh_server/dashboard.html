@@ -98,6 +98,24 @@
       .message{max-width:94%}
       .auth{margin:40px auto;padding:24px}
     }
+    @media(max-width:480px){
+      .shell{padding:18px 12px}
+      .masthead{flex-direction:column;align-items:stretch;gap:14px}
+      h1{font-size:32px}
+      .actions{flex-direction:row;flex-wrap:wrap}
+      .actions button{flex:1}
+      .connection{flex-direction:column;align-items:flex-start;gap:8px}
+      .panel-heading{padding:13px 14px}
+      .panel-heading>div{min-width:0;overflow-wrap:anywhere}
+      .messages{height:55dvh;min-height:260px;padding:12px}
+      .message{max-width:90%;min-width:0;flex-shrink:0;overflow-wrap:anywhere}
+      .items{height:280px;max-height:50dvh;padding:0 14px}
+      .item-heading{flex-wrap:wrap}
+      .auth{padding:20px}
+    }
+    @media(pointer:coarse){
+      .actions button,.auth input,.auth button{min-height:44px}
+    }
     @media(prefers-reduced-motion:no-preference){button{transition:border-color .15s ease}}
   </style>
 </head>
