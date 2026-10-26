@@ -10,8 +10,10 @@ import math
 import re
 import secrets
 import socket
+import sqlite3
 import time
 import uuid
+from contextlib import closing
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib.resources import files
 from urllib.parse import parse_qs, urlsplit
@@ -273,7 +275,7 @@ class Handler(BaseHTTPRequestHandler):
         hub = self.server.hub
         hub.available()
         if re.fullmatch(r"/t/[a-z0-9]+", path):
-            name = "hub_dashboard.html"
+            name = "dashboard.html"
         elif re.fullmatch(r"/join/[a-z0-9]+\.[A-Za-z0-9_-]+", path):
             name = "hub_join.html"
         else:
@@ -331,15 +333,61 @@ class Handler(BaseHTTPRequestHandler):
         finally:
             connection.close()
 
+    def _legacy_adapter(self, url):
+        """Read-only legacy snapshots for authenticated default-team members."""
+        path = url.path[len("/api/legacy"):]
+        if self.command != "GET":
+            raise HttpError(405, "legacy panels are read-only")
+        if path not in ("/transcript", "/patches") and not PATCH_PATH.fullmatch("/v1" + path):
+            raise HttpError(404, "not found")
+        hub = self.server.hub
+        endpoint = hub.endpoint()
+        connection = http.client.HTTPConnection(endpoint.hostname, endpoint.port, timeout=35)
+        try:
+            connection.request("GET", "/api/state", headers={
+                "Authorization": self.headers.get("Authorization", ""),
+                "X-Forwarded-For": self.client_address[0],
+            })
+            response = connection.getresponse()
+            content = response.read()
+            if response.status != 200:
+                self._send(content, response.status, "application/json; charset=utf-8")
+                return
+            member_state = json.loads(content)
+        except (OSError, http.client.HTTPException, ValueError):
+            raise HubUnavailable("hub unavailable") from None
+        finally:
+            connection.close()
+        query = parse_qs(url.query, keep_blank_values=True)
+        team = query.get("team", [None])[0]
+        if not team or team != member_state.get("team", {}).get("id"):
+            raise HttpError(403, "team does not match member key")
+        # The seed ledger is immutable metadata, unlike team names. Read it without
+        # authenticating as an agent (which would falsely refresh that agent's presence).
+        try:
+            with closing(sqlite3.connect(hub._database_path().as_uri() + "?mode=ro", uri=True)) as database:
+                seeded = database.execute("SELECT team_id FROM agentmesh_seed LIMIT 1").fetchone()
+        except (OSError, ValueError, sqlite3.Error):
+            raise HubUnavailable("hub unavailable") from None
+        if not seeded or team != seeded[0]:
+            raise HttpError(403, "legacy panels are available only for the default team")
+        state = self.server.state
+        if state is None or state.stop.is_set():
+            raise HttpError(503, "server shutting down")
+        with state.condition:
+            data, status = self._route(state, "viewer" if path == "/transcript" else "agent-a",
+                                       "/v1" + path, query)
+        self._json(data, status)
+
     def _handle(self):
         try:
             self.body = self._read_body()
             url = urlsplit(self.path)
-            if self.command == "GET" and url.path in ("/", "/index.html"):
-                self._dashboard("signin.html")
+            if self.command in ("GET", "HEAD") and url.path in ("/", "/index.html", "/viewer"):
+                self._dashboard("signin.html" if url.path == "/index.html" else "dashboard.html")
                 return
-            if self.command == "GET" and url.path == "/viewer":
-                self._dashboard()
+            if url.path.startswith("/api/legacy/"):
+                self._legacy_adapter(url)
                 return
             if url.path == "/api" or url.path.startswith("/api/"):
                 self._hub_proxy()

@@ -54,6 +54,7 @@ const post = (route, body, token, status = 200) => call('POST', route, body, tok
 async function drain(reader) { let text = ''; while (true) { const r = await reader.read(); if (r.done) return text; text += new TextDecoder().decode(r.value); } }
 (async () => {
   await testSignin(worker, env);
+  await require('./unified_routes.cjs')();
   let state = await get('/api/state');
   assert.equal(state.team.name, 'default');
   assert.equal(state.me.name, 'agent-a');
