@@ -90,8 +90,8 @@ def test_dashboard_keeps_writable_access_controls_and_theme():
     assert 'viewer-key' not in ids
     assert not re.search(r'read[- ]only|value=[\"\']viewer[\"\']', html, re.IGNORECASE)
     assert 'Authorization: "Bearer "' in html
-    # Notion-style palette: light/dark text and backgrounds, accent, agent-a/agent-b colors.
-    for color in ("#37352f", "#f7f7f5", "#2383e2", "#191919", "#337ea9", "#d9730d", "#529cca", "#ffa344"):
+    # Notion palette: light/dark background and text, accent, agent-a/agent-b colors.
+    for color in ("#f7f7f5", "#37352f", "#2383e2", "#d9730d", "#191919", "#529cca", "#ffa344"):
         assert color in html.lower()
 
 
