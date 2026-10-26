@@ -9,41 +9,43 @@
     (function () { try { const theme = localStorage.getItem("papers-theme"); if (theme === "dark" || theme === "light") document.documentElement.setAttribute("data-theme", theme); } catch {} })();
   </script>
   <style nonce="__AGENTMESH_NONCE__">
+    /* Notion-style sign-in; palette shared with dashboard.html. */
     :root{
-      --bg:#f4f5f0; --panel:#fff; --line:#cbd2ce;
-      --text:#101613; --muted:#4f5d58; --cyan:#087e64; --orange:#cf5c26;
+      --bg:#fff; --text:#37352f; --muted:rgba(55,53,47,.65); --line:rgba(55,53,47,.16); --line-soft:rgba(55,53,47,.09);
+      --hover:rgba(55,53,47,.08); --accent:#2383e2; --accent-hover:#0077d4; --red:#d44c47;
+      --focus:rgba(35,131,226,.57) 0 0 0 1px inset,rgba(35,131,226,.35) 0 0 0 2px;
     }
     html[data-theme="light"]{color-scheme:light}
     html[data-theme="dark"]{color-scheme:dark;
-      --bg:#080b0d; --panel:#0d1214; --line:#293236;
-      --text:#f1f3ee; --muted:#a0aaac; --cyan:#77f4d0; --orange:#ff8b51;
+      --bg:#191919; --text:rgba(255,255,255,.81); --muted:rgba(255,255,255,.55); --line:rgba(255,255,255,.13);
+      --line-soft:rgba(255,255,255,.094); --hover:rgba(255,255,255,.055); --red:#ff7369;
     }
     *{box-sizing:border-box}
-    body{margin:0;background:var(--bg);color:var(--text);font:14px/1.6 Inter,sans-serif}
-    button,input{font:inherit}
-    button{cursor:pointer;background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:8px 13px}
-    button:hover{border-color:var(--muted)}
-    button:disabled{opacity:.55;cursor:not-allowed}
-    :focus-visible{outline:2px solid var(--cyan);outline-offset:3px}
-    .shell{max-width:960px;margin:auto;padding:24px}
-    .masthead{display:flex;align-items:center;justify-content:space-between;gap:16px;border-bottom:1px solid var(--line);padding-bottom:16px}
-    .brand{display:flex;align-items:center;gap:14px}
-    .brand-mark{width:42px;height:42px;color:var(--cyan)}
-    .eyebrow,.footer{font:11px "JetBrains Mono",monospace}
-    .eyebrow{color:var(--cyan);letter-spacing:.15em;text-transform:uppercase}
-    h1,h2{font-family:Newsreader,Georgia,serif;font-weight:400;letter-spacing:-.04em}
-    h1{font-size:28px;line-height:1.1;margin:4px 0}
-    h2{font-size:32px;line-height:1.2;margin:0}
-    .auth{max-width:460px;margin:70px auto;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:28px}
-    .auth p{color:var(--muted)}
-    label{display:block;font-weight:500;margin:20px 0 7px}
-    label span{font-weight:400;color:var(--muted)}
-    input{width:100%;min-height:44px;background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:7px;padding:11px 12px}
-    .submit{width:100%;min-height:44px;margin-top:20px;background:var(--text);color:var(--bg);border-color:var(--text)}
-    .auth .error{color:var(--orange);font-size:12px;min-height:20px;margin-bottom:0}
-    .footer{color:var(--muted);text-align:center;line-height:1.6}
+    body{margin:0;background:var(--bg);color:var(--text);font:14px/1.5 ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,"Apple Color Emoji",Arial,sans-serif;-webkit-font-smoothing:antialiased}
+    button,input{font:inherit;color:inherit}
+    button{cursor:pointer;min-height:28px;padding:0 10px;background:transparent;border:0;border-radius:6px;color:var(--muted);font-weight:500}
+    button:hover{background:var(--hover);color:var(--text)}
+    button:disabled{opacity:.4;cursor:not-allowed}
+    :focus-visible{outline:none;box-shadow:var(--focus);border-radius:6px}
+    .shell{min-height:100dvh;display:flex;flex-direction:column;padding:0 16px}
+    .masthead{display:flex;align-items:center;justify-content:space-between;gap:16px;min-height:52px}
+    .brand{display:flex;align-items:center;gap:8px;font-weight:600}
+    .brand-mark{width:22px;height:22px;padding:3px;border-radius:5px;background:var(--text);color:var(--bg)}
+    .eyebrow{display:none}
+    h1{font-size:14px;font-weight:600;margin:0}
+    .auth{width:100%;max-width:320px;margin:14vh auto 48px}
+    .auth-icon{font-size:48px;line-height:1;margin-bottom:14px}
+    h2{font-size:26px;font-weight:700;line-height:1.25;margin:0 0 6px}
+    .auth p{color:var(--muted);margin:0 0 20px}
+    label{display:block;font-size:12px;font-weight:500;color:var(--muted);margin:14px 0 6px}
+    label span{font-weight:400}
+    input{width:100%;min-height:36px;padding:4px 10px;border:0;border-radius:6px;background:var(--hover);box-shadow:var(--line-soft) 0 0 0 1px inset;font-size:15px}
+    input:focus{outline:none;box-shadow:var(--focus);background:var(--bg)}
+    .submit{width:100%;min-height:36px;margin-top:20px;background:var(--accent);color:#fff;font-size:14px}
+    .submit:hover{background:var(--accent-hover);color:#fff}
+    .auth .error{color:var(--red);font-size:13px;min-height:20px;margin:10px 0 0}
     a{color:inherit;text-underline-offset:3px}
-    @media(max-width:480px){.shell{padding:18px 12px}.auth{margin:40px auto;padding:20px}.brand{gap:10px}.brand-mark{width:32px;height:32px}h1{font-size:24px}}
+    @media(pointer:coarse){button,input,.submit{min-height:44px}}
   </style>
 </head>
 <body>
@@ -56,7 +58,8 @@
       <button id="theme-toggle" type="button">Dark theme</button>
     </header>
     <main class="auth">
-      <h2>Sign in</h2>
+      <div class="auth-icon" aria-hidden="true">🤝</div>
+      <h2>Sign in to your team</h2>
       <p id="signin-hint">Enter your access key (the token from your setup) to open your team dashboard. Team ID is optional.</p>
       <form id="signin-form">
         <label for="access-key">Access key</label>
