@@ -8,7 +8,7 @@ import sqlite3
 import threading
 import time
 
-from .config import TOKEN_KEYS, secure_directory
+from .config import AGENT_TOKEN_KEYS, secure_directory
 
 AGENTS = ("agent-a", "agent-b")
 DAY = 86_400_000
@@ -16,6 +16,11 @@ MAX_WAIT_S = 25
 MAX_WAITERS_PER_AGENT = 4
 
 SCHEMA = """
+CREATE TABLE IF NOT EXISTS agent_tokens (
+  agent TEXT NOT NULL CHECK(agent IN ('agent-a', 'agent-b')),
+  token_hash BLOB NOT NULL CHECK(length(token_hash) = 32),
+  PRIMARY KEY (agent, token_hash)
+);
 CREATE TABLE IF NOT EXISTS tasks (
   id TEXT PRIMARY KEY, title TEXT NOT NULL, description TEXT NOT NULL,
   assignee TEXT NOT NULL, created_by TEXT NOT NULL, status TEXT NOT NULL,
@@ -78,7 +83,7 @@ class State:
         self.limiter = RateLimiter()
         self.token_hashes = [
             (role, hashlib.sha256(token.strip().encode()).digest())
-            for role, key in zip((*AGENTS, "viewer"), TOKEN_KEYS)
+            for role, key in zip(AGENTS, AGENT_TOKEN_KEYS)
             for token in config[key].split(",") if len(token.strip()) >= 32
         ]
         path = secure_directory(config_dir) / "data.db"
@@ -92,6 +97,16 @@ class State:
         self.db = sqlite3.connect(path, check_same_thread=False, isolation_level=None)
         self.db.row_factory = sqlite3.Row
         self.db.executescript(SCHEMA)
+        # Credentials are authoritative at startup, including rotation/removal.
+        # Only hashes are stored; equal restarts avoid rewriting the seed rows.
+        with self.db:
+            self.db.execute("BEGIN IMMEDIATE")
+            stored = {(row["agent"], row["token_hash"])
+                      for row in self.db.execute("SELECT agent, token_hash FROM agent_tokens")}
+            if stored != set(self.token_hashes):
+                self.db.execute("DELETE FROM agent_tokens")
+                self.db.executemany("INSERT INTO agent_tokens (agent, token_hash) VALUES (?, ?)",
+                                    sorted(set(self.token_hashes)))
         from .coordination import migrate
         migrate(self.db)
         self.stop = threading.Event()
