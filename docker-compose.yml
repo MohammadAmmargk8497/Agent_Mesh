@@ -1,0 +1,63 @@
+services:
+  app:
+    image: agentmesh-app:local
+    build: .
+    init: true
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    environment:
+      AGENT_A_TOKEN: ${AGENT_A_TOKEN:?Set AGENT_A_TOKEN in .env}
+      AGENT_B_TOKEN: ${AGENT_B_TOKEN:?Set AGENT_B_TOKEN in .env}
+      AGENTMESH_PUBLIC_URL: ${AGENTMESH_PUBLIC_URL:?Set AGENTMESH_PUBLIC_URL in .env}
+    command: [serve, --host, 0.0.0.0, --allow-remote-bind]
+    volumes:
+      - data:/data
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m,mode=1777
+    networks: [backend]
+
+  tunnel:
+    image: cloudflare/cloudflared:2026.10.0
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    environment:
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:?Set TUNNEL_TOKEN in .env}
+    # Remotely managed ingress must already route the hostname to http://app:8787.
+    # The token stays out of command arguments; this does not change DNS/ingress.
+    command: [tunnel, --no-autoupdate, run]
+    depends_on:
+      app:
+        condition: service_healthy
+    networks: [backend, egress]
+
+  backup:
+    image: agentmesh-app:local
+    build: .
+    init: true
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    entrypoint: [/usr/local/bin/agentmesh-backup]
+    command: ["86400"]
+    healthcheck:
+      disable: true
+    depends_on:
+      app:
+        condition: service_healthy
+    volumes:
+      - data:/data:ro
+      - ./backups:/backups
+    network_mode: none
+
+volumes:
+  data:
+
+networks:
+  backend:
+    internal: true
+  egress:

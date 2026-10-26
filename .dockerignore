@@ -1,0 +1,20 @@
+# Only application build inputs may enter the image context.
+**
+!Dockerfile
+!server/
+!server/pyproject.toml
+!server/src/
+!server/src/**
+!scripts/
+!scripts/sqlite-backup.sh
+**/__pycache__/
+**/*.py[cod]
+**/*.egg-info/
+**/node_modules/
+**/.env
+**/.env.*
+**/config
+**/config.env
+**/*.db
+**/*.db-*
+**/*.sqlite*
