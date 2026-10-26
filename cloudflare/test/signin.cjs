@@ -53,10 +53,10 @@ module.exports = async function testSignin(worker, env) {
     const nonce = /script-src 'nonce-([^']+)'/.exec(csp)[1];
     nonces.push(nonce);
     assert.equal(csp, `default-src 'none'; script-src 'nonce-${nonce}'; style-src 'nonce-${nonce}' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src 'self'; img-src 'self' data:; base-uri 'none'; frame-ancestors 'none'`);
-    assert.equal(html, (route === '/viewer' ? dashboard : signin).replaceAll('__AGENTMESH_NONCE__', nonce));
+    assert.equal(html, (route === '/index.html' ? signin : dashboard).replaceAll('__AGENTMESH_NONCE__', nonce));
     assert.ok([...html.matchAll(/<(?:script|style)\b[^>]*>/g)].every(([tag]) => tag.includes('nonce="' + nonce + '"')));
     for (const token of [env.AGENT_A_TOKEN, env.AGENT_B_TOKEN, env.VIEWER_TOKEN]) assert.ok(!html.includes(token));
-    assert.ok(html.includes(route === '/viewer' ? 'id="viewer-form"' : 'id="signin-form"'));
+    assert.ok(html.includes(route === '/index.html' ? 'id="signin-form"' : 'id="viewer-form"'));
   }
   assert.equal(new Set(nonces).size, nonces.length);
   for (const host of ['agents.zahid.win', 'mesh.example']) {

@@ -19,8 +19,8 @@ def test_signin_package_matches_worker_byte_for_byte():
 
 
 @pytest.mark.parametrize("page,paths", [
-    ("dashboard.html", ("/viewer", "/viewer", "/viewer")),
-    ("signin.html", ("/", "/index.html", "/")),
+    ("dashboard.html", ("/", "/viewer", "/")),
+    ("signin.html", ("/index.html", "/index.html", "/index.html")),
 ])
 def test_public_pages_fresh_nonce_csp_and_no_inline_tokens(api, page, paths):
     from importlib.resources import files

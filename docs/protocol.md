@@ -23,8 +23,8 @@ Messages are readable and acknowledgeable only by their recipient. Tasks are vis
 assignee; patches are shared between both agents. Review and cancellation belong to the task creator, while claim
 and completion belong to the assignee. Conflicting state transitions return 409.
 
-`GET /health` is public. The Python server serves its public sign-in page on `/` and `/index.html` and its legacy
-dashboard on `/viewer`, with a fresh CSP nonce and no embedded tokens. The Worker serves these same HTML routes
+`GET /health` is public. The Python server serves the unified viewer dashboard on `/` and `/viewer`, and keeps its public
+sign-in page on `/index.html`, with a fresh CSP nonce and no embedded tokens. The Worker serves these same HTML routes
 only on its configured dashboard hostname, `agentmesh.zahid.win`. Viewer mode uses the viewer's bearer token for the transcript request;
 Agent mode uses that member's bearer token for the separate dashboard-state route and authenticated writes.
 
@@ -268,7 +268,14 @@ tasks rather than relying on deleted history.
 
 ## Dashboard controls
 
-Both hosts serve byte-identical, self-contained legacy dashboards at `/viewer`, with no CDN assets.
+Both hosts serve byte-identical, self-contained unified dashboards at `/t/<team-id>` and `/viewer`, and at the dashboard host root, with no CDN assets.
+Member mode uses the copied hub behaviors and existing `/api/*` payloads; see [Unified dashboard](unified-dashboard.md)
+for controls, join links, presence thresholds and session handling. Member keys are scoped to the team in the page URL.
+Read-only host adapters at `/api/legacy/transcript`, `/api/legacy/patches` and `/api/legacy/patches/<uuid>` require
+`?team=<id>`, a matching active membership, and the originally seeded default team ID, never an editable team name.
+Other teams cannot read legacy room data; writes through these adapters are rejected. The hub API itself is unchanged.
+
+The following controls document the retained legacy Viewer/Agent modes at `/viewer`.
 The existing AgentMesh theme, theme switch, viewer sign-in and four-second polling
 remain. Agent mode uses `GET /v1/dashboard/state?after=N`, with the same snapshot
 structure plus `me` (the authenticated member) and task `dashboard_status` values.
@@ -452,16 +459,16 @@ Upstream creation/join, bad-auth and member rate tiers remain in effect.
 
 ### Pages and client boundary
 
-`/` and `/index.html` serve the sign-in page, accepting an access key (the token from setup) and an optional team ID.
+`/` serves the unified dashboard, accepting member access directly. `/index.html` keeps the unchanged sign-in page, accepting an access key (the token from setup) and an optional team ID.
 When no team ID is supplied, the page calls `GET /api/state` with `Authorization: Bearer <key>` and reads `team.id`.
-It then opens `/t/<team-id>#k=<key>`. The unchanged legacy Viewer-key dashboard is at `/viewer`. These HTML routes
+It then opens `/t/<team-id>#k=<key>`. That route and `/viewer` serve the same unified viewer page; `/viewer` retains the legacy Viewer/Agent access choices. These HTML routes
 are public and use fresh nonce CSP with no embedded credentials; on the Worker they require the configured dashboard hostname.
 
 `/t/<tid>#k=<member token>` and `/join/<code>` are served **locally** by each host,
 using generated self-contained HTML with fresh nonce CSP and HTML-escaped
 `{{HUB_URL}}`/`{{INVITE_URL}}` replacements. All JS/CSS/SVG are inline; there is no
 need for `/static/*`. The dashboard removes the fragment, stores its member
-credential only in `sessionStorage['agentmesh:'+teamId]`, renders via textContent,
+credential only in `sessionStorage['agentmesh:'+teamId]` (or `agentmesh:root` at `/`), renders via textContent,
 and uses authenticated fetch for JSON/SSE. `/robots.txt` disallows team/join URLs.
 
 `agentmesh-mcp` uses the upstream ten tools (team_sync, team_post, team_ask,
@@ -474,5 +481,5 @@ The setup wizard accepts invite URLs and preserves the config.env format.
 The client bin entry has a minimal config-boundary adaptation so the executable
 copied by upstream installApp also enters the same bootstrap and Access wrapper;
 upstream CLI commands, config machine stamps and tool implementations are unchanged.
-The legacy viewer dashboard is at `/viewer`; upstream has no multi-team viewer or
+Legacy viewer mode remains at `/viewer` on the unified page; upstream has no multi-team viewer or
 team token, nor dashboard remove/delete controls (CLI/API provide those).

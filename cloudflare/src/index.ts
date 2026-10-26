@@ -23,6 +23,7 @@ const MAX_PATCH = 200 * 1024;
 const MAX_WAIT_S = 25;
 const MAX_SOCKETS_PER_AGENT = 4;
 const DAY = 86_400_000;
+const legacyTeams = new WeakMap<Env, string>();
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function json(data: unknown, status = 200): Response {
@@ -62,6 +63,48 @@ async function identify(token: string, env: Env): Promise<Agent | "viewer" | nul
   return null;
 }
 
+// Legacy data belongs only to the seeded default team. Resolve that identity
+// through the existing hub API, never by the editable/non-unique team name.
+async function legacyAdapter(request: Request, env: Env, ip: string): Promise<Response> {
+  const url = new URL(request.url);
+  const path = url.pathname.slice("/api/legacy".length);
+  if (request.method !== "GET") return error("legacy panels are read-only", 405);
+  if (path !== "/transcript" && path !== "/patches" && !/^\/patches\/[0-9a-f-]{36}$/i.test(path)) return error("not found", 404);
+  const hub = env.HUB.get(env.HUB.idFromName("openhuddle-hub"));
+  const stateFor = (token: string) => hub.fetch(new Request(url.origin + "/api/state", {
+    headers: { authorization: "Bearer " + token, "x-agentmesh-client-ip": ip },
+  }));
+  const authorization = request.headers.get("authorization") ?? "";
+  const token = authorization.startsWith("Bearer ") ? authorization.slice(7).trim() : "";
+  const response = await stateFor(token);
+  if (!response.ok) return response;
+  const state = await response.json() as any;
+  const team = url.searchParams.get("team");
+  if (!team || team !== state.team?.id) return error("team does not match member key", 403);
+  let defaultTeam = legacyTeams.get(env);
+  if (!defaultTeam) {
+    const agent = await identify(token, env);
+    if ((agent === "agent-a" || agent === "agent-b") && state.me?.name === agent) defaultTeam = state.team.id;
+    else {
+      for (const [name, secret] of [["agent-a", env.AGENT_A_TOKEN], ["agent-b", env.AGENT_B_TOKEN]]) {
+        const seeded = await stateFor(secret.split(",")[0].trim());
+        if (!seeded.ok) { await seeded.body?.cancel(); continue; }
+        const seededState = await seeded.json() as any;
+        if (seededState.me?.name === name) { defaultTeam = seededState.team?.id; break; }
+      }
+    }
+    if (defaultTeam) legacyTeams.set(env, defaultTeam);
+  }
+  if (!defaultTeam || team !== defaultTeam) return error("legacy panels are available only for the default team", 403);
+  const legacyUrl = new URL("/v1" + path, url.origin);
+  if (url.searchParams.has("after")) legacyUrl.searchParams.set("after", url.searchParams.get("after")!);
+  // Only this fixed read-only allowlist can enter the legacy room; caller-supplied
+  // identity headers and hub credentials are never forwarded to it.
+  return env.ROOM.get(env.ROOM.idFromName("default-room")).fetch(new Request(legacyUrl, {
+    headers: { "x-agentmesh-agent": path === "/transcript" ? "viewer" : "agent-a" },
+  }));
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
@@ -70,10 +113,22 @@ export default {
     if (hubRoute) {
       const ip = request.headers.get("cf-connecting-ip") ?? "unknown";
       if (env.LIMITER && !(await env.LIMITER.limit({ key: `ip:${ip}` })).success) return error("rate limited", 429);
+      if (url.pathname.startsWith("/api/legacy/")) return legacyAdapter(request, env, ip);
       if (url.pathname.startsWith("/api/")) {
         const headers = new Headers(request.headers);
         headers.set("x-agentmesh-client-ip", ip); // Never trust a caller-supplied limiter identity.
-        return env.HUB.get(env.HUB.idFromName("openhuddle-hub")).fetch(new Request(request, { headers }));
+        const response = await env.HUB.get(env.HUB.idFromName("openhuddle-hub")).fetch(new Request(request, { headers }));
+        // Learn the default identity from real agent traffic where possible, rather
+        // than issuing a service-side lookup that refreshes an agent's presence.
+        if (url.pathname === "/api/state" && request.method === "GET" && response.ok && !legacyTeams.has(env)) {
+          const authorization = request.headers.get("authorization") ?? "";
+          const agent = await identify(authorization.startsWith("Bearer ") ? authorization.slice(7).trim() : "", env);
+          if (agent === "agent-a" || agent === "agent-b") {
+            const state = await response.clone().json() as any;
+            if (state.me?.name === agent && typeof state.team?.id === "string") legacyTeams.set(env, state.team.id);
+          }
+        }
+        return response;
       }
       const head = request.method === "HEAD";
       if (request.method !== "GET" && !head) return error("not found", 404);
@@ -82,7 +137,7 @@ export default {
       if (!join && !/^\/t\/[a-z0-9]+$/.test(url.pathname)) return error("not found", 404);
       const escapeHtml = (value: string) => value.replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]!));
       const nonce = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(16))));
-      const page = (join ? hubJoin : hubDashboard).replaceAll("{{HUB_URL}}", escapeHtml(url.origin))
+      const page = (join ? hubJoin : dashboard).replaceAll("{{HUB_URL}}", escapeHtml(url.origin))
         .replaceAll("{{INVITE_URL}}", escapeHtml(url.origin + url.pathname)).replaceAll("__AGENTMESH_NONCE__", nonce);
       return new Response(head ? null : page, { headers: {
         "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff",
@@ -91,11 +146,11 @@ export default {
       } });
     }
     const dashboardHost = url.hostname === "agentmesh.zahid.win";
-    if (dashboardHost && request.method === "GET" &&
+    if (dashboardHost && (request.method === "GET" || request.method === "HEAD") &&
         (url.pathname === "/" || url.pathname === "/index.html" || url.pathname === "/viewer")) {
       const nonce = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(16))));
-      const page = url.pathname === "/viewer" ? dashboard : signin;
-      return new Response(page.replaceAll("__AGENTMESH_NONCE__", nonce), { headers: {
+      const page = url.pathname === "/index.html" ? signin : dashboard;
+      return new Response(request.method === "HEAD" ? null : page.replaceAll("__AGENTMESH_NONCE__", nonce), { headers: {
         "content-type": "text/html; charset=utf-8",
         "cache-control": "no-store",
         "x-content-type-options": "nosniff",
