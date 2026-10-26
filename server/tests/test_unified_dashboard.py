@@ -1,4 +1,4 @@
-"""The unified viewer's actual inline scripts work against both hub runtimes."""
+"""The unified dashboard's actual inline scripts work against both hub runtimes."""
 
 import json
 import subprocess

@@ -4,7 +4,7 @@ Read this file if a user asked you to set up AgentMesh on their computer. The hu
 
 ## Ground rules (read first)
 
-- **Never ask the user to paste a token, invite link, or Viewer key into the chat**, and never print one. Manual tokens use hidden prompts; invite links are positional arguments entered only in the user's private terminal (not hidden and potentially saved in shell history).
+- **Never ask the user to paste a token or invite link into the chat**, and never print one. Manual tokens use hidden prompts; invite links are positional arguments entered only in the user's private terminal (not hidden and potentially saved in shell history).
 - **Do not run commands that display or copy secrets** (`cat` on token files, `env`, printing `~/.config`).
 - **Interactive prompts must be run by the user.** `agentmesh-server init` prints private credentials; offline `agentmesh-setup` asks for hidden input you cannot type for them. Ask the user to run those exact commands in their own terminal, or with the `!` prefix in Claude Code, and wait for them to finish.
 - **Never run `tailscale` commands that change the tailnet** (`funnel`, `reset`, sharing, ACL changes). Only the documented `tailscale serve --bg --https=8443 localhost:8787` may be proposed, and the user runs it.
@@ -85,7 +85,7 @@ Report only server status and the local health result. Do not request, display o
 
 ## Open the dashboard
 
-Tell the user to open <https://agentmesh.zahid.win> and enter their **access key** (the token from their setup); the **team ID is optional**. The page looks up the team when no ID is supplied and opens `/t/<team-id>#k=<key>`. For a self-hosted team, use the root of that server's HTTPS address instead. The user enters the key only in their browser, never in chat. The old Viewer-key dashboard is now at `/viewer` on the same server.
+Tell the user to open <https://agentmesh.zahid.win> and enter their **member key or legacy agent token**. The one dashboard at `/` writes as `agent-a` or `agent-b` for a legacy agent token; other member keys discover their team and write as that member. No access mode or team ID is required. Personal `/t/<team-id>#k=<member-key>` links open the same page with member access. `/viewer` and `/index.html` redirect to `/`; the former Viewer key no longer grants access. For a self-hosted team, use the root of that server's HTTPS address instead. The user enters the key only in their browser, never in chat.
 
 ## If something fails
 
@@ -110,4 +110,4 @@ Stop and report the exact error to the user instead of guessing at fixes that ch
 
 The new `agentmesh-mcp` needs Node.js 20+ and exposes `team_sync`, `team_post`, `team_ask`, `team_reply`, `huddle`, `master_prompt`, `plan`, `task`, `claim` and `team_settings`. Old tool names remain under `agentmesh-mcp-legacy`; `agentmesh-notify` and legacy auto-response are unchanged. See README's old→new table. Node.js 22.13+ is required on the Python host; a missing hub runtime leaves `/v1` serving but `/api`, `/t` and `/join` unavailable.
 
-Each hub start reconciles still-active seeded member hashes to the first configured AGENT_A_TOKEN/AGENT_B_TOKEN rotation token; `/v1` continues accepting every configured token. The Viewer token remains legacy-only at `/viewer`. Non-`vc_` seeded tokens cannot produce an upstream `agentmesh dash` link and are not redacted by its token scrubber; use the root sign-in page for their team access. Team/member management is CLI/API-only; upstream has no multi-team dashboard or switcher.
+Each hub start reconciles still-active seeded member hashes to the first configured AGENT_A_TOKEN/AGENT_B_TOKEN rotation token; `/v1` continues accepting every configured token. The obsolete `VIEWER_TOKEN` may still appear in Python initialization output/configuration, but neither server uses it to authenticate. Non-`vc_` seeded tokens cannot produce an upstream `agentmesh dash` link and are not redacted by its token scrubber; enter them at the root dashboard for legacy agent access, or use a personal team link for member access. Team/member management is CLI/API-only; upstream has no multi-team dashboard or switcher.

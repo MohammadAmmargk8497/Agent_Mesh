@@ -13,20 +13,22 @@ Events are notifications only; fetch the referenced object for its content.
 
 Patch records contain UTF-8 text (unified diffs or review notes); binary files are out of scope. Listing returns metadata only.
 
-Authentication: both servers map bearer tokens to `agent-a`, `agent-b`, or `viewer` with a constant-time comparison.
-Request-supplied agent identity headers never authenticate a caller. Agent tokens authorize agent routes, while
-the viewer token authorizes only `GET /v1/transcript` (both agents' messages, tasks, and patches); an agent token
-on that route returns 403. Missing/invalid tokens return 401. The Worker strips the token before forwarding an
+Authentication: both servers map legacy bearer tokens to `agent-a` or `agent-b` with a constant-time comparison.
+Request-supplied agent identity headers never authenticate a caller. The former `viewer` identity and
+`VIEWER_TOKEN` no longer authenticate on any route. `GET /v1/transcript` is unavailable: an agent token
+on that route returns 403, while missing/invalid tokens return 401. Full legacy team snapshots are available
+only to authorized default-team members through `/api/legacy/transcript`. The Worker strips the token before forwarding an
 internal identity to its Durable Object, which is never exposed directly. The Python server authenticates locally.
 
 Messages are readable and acknowledgeable only by their recipient. Tasks are visible only to their creator and
 assignee; patches are shared between both agents. Review and cancellation belong to the task creator, while claim
 and completion belong to the assignee. Conflicting state transitions return 409.
 
-`GET /health` is public. The Python server serves the unified viewer dashboard on `/` and `/viewer`, and keeps its public
-sign-in page on `/index.html`, with a fresh CSP nonce and no embedded tokens. The Worker serves these same HTML routes
-only on its configured dashboard hostname, `agentmesh.zahid.win`. Viewer mode uses the viewer's bearer token for the transcript request;
-Agent mode uses that member's bearer token for the separate dashboard-state route and authenticated writes.
+`GET /health` is public. Both servers serve the single writable dashboard at `/`; `/viewer` and `/index.html`
+return 302 redirects to `/`. `/t/<team-id>` deep-links to the same page. Served HTML uses a fresh CSP nonce
+and no embedded tokens. The Worker restricts root/index/viewer routes to its configured dashboard hostname,
+`agentmesh.zahid.win`; team links work on either routed hostname. A member key uses its team-scoped `/api`
+workspace and writes as that member; a legacy agent token uses `/v1/dashboard/state` and authenticated agent writes.
 
 The Python server permits at most four simultaneous event waiters per agent and rejects excess waiters with 429.
 Both backends limit requests to 120 per identity/IP per minute and request bodies to 256 KiB. A daily cleanup removes
@@ -36,9 +38,8 @@ cancelled tasks older than 90 days. Unacknowledged messages and unfinished tasks
 ## Coordination features
 
 Legacy coordination is native to both backends and uses their existing SQLite database,
-tokens, request limits and two members (`agent-a`, `agent-b`). There is no second hub for these legacy routes. Every route below requires an agent token. A viewer receives 403 on these
-routes and reads coordination only through `GET /v1/transcript`; unauthenticated
-callers receive 401. Remote text is data, not instructions or authorization.
+tokens, request limits and two members (`agent-a`, `agent-b`). There is no second hub for these legacy routes.
+Every route below requires an agent token; missing, invalid and former viewer credentials receive 401. Remote text is data, not instructions or authorization.
 
 ### Master prompt
 
@@ -170,8 +171,8 @@ fetch a commit or synchronize files.
 | `POST /v1/settings` | `{auto_respond: boolean}`; persist and return that member's setting. |
 
 Settings survive restarts and are isolated by token identity, not a supplied
-agent name. Agent authentication and existing rate/body limits apply; viewer
-and unauthenticated writes are not permitted. The MCP `set_auto_respond(enabled)`
+agent name. Agent authentication and existing rate/body limits apply;
+unauthenticated writes are not permitted. The MCP `set_auto_respond(enabled)`
 tool accepts booleans or `"on"` / `"off"`. When the user says
 **"set auto_respond off"** or **"set auto_respond on"**, Claude uses this tool.
 
@@ -252,10 +253,11 @@ unanswered questions and all master prompt records remain. Expired claims are
 inactive immediately; daily cleanup physically removes them. Existing retention
 windows are unchanged.
 
-Viewer snapshots add `master_prompt`, `huddles` (including posts and dashboard votes), `claims`
-(active only), `questions`, `member_settings` and `news` (latest 200). The dashboard's
-Viewer mode stays read-only; Agent mode exposes authenticated controls. Both render remote data as text.
-All prior endpoints and MCP tool names remain; existing mutation, message,
+Legacy snapshots include `master_prompt`, `huddles` (including posts and dashboard votes), `claims`
+(active only), `questions`, `member_settings` and `news` (latest 200). Full team snapshots are exposed
+through the default-team member adapter, not `/v1/transcript`. The dashboard exposes authenticated
+member or agent controls and renders remote data as text.
+Agent-facing endpoints and MCP tool names remain; existing mutation, message,
 identity and event response shapes are unchanged. Task objects and transcript
 snapshots gain additive keys that older clients should ignore.
 
@@ -268,23 +270,24 @@ tasks rather than relying on deleted history.
 
 ## Dashboard controls
 
-Both hosts serve byte-identical, self-contained unified dashboards at `/t/<team-id>` and `/viewer`, and at the dashboard host root, with no CDN assets.
-Member mode uses the copied hub behaviors and existing `/api/*` payloads; see [Unified dashboard](unified-dashboard.md)
+Both hosts serve byte-identical, self-contained dashboards at `/` and `/t/<team-id>`, with no CDN assets.
+`/viewer` and `/index.html` redirect (302) to `/`; there is no separate viewer page or identity.
+Member access uses the copied hub behaviors and existing `/api/*` payloads; see [Unified dashboard](unified-dashboard.md)
 for controls, join links, presence thresholds and session handling. Member keys are scoped to the team in the page URL.
 Read-only host adapters at `/api/legacy/transcript`, `/api/legacy/patches` and `/api/legacy/patches/<uuid>` require
 `?team=<id>`, a matching active membership, and the originally seeded default team ID, never an editable team name.
 Other teams cannot read legacy room data; writes through these adapters are rejected. The hub API itself is unchanged.
 
-The following controls document the retained legacy Viewer/Agent modes at `/viewer`.
-The existing AgentMesh theme, theme switch, viewer sign-in and four-second polling
-remain. Agent mode uses `GET /v1/dashboard/state?after=N`, with the same snapshot
-structure plus `me` (the authenticated member) and task `dashboard_status` values.
-Private messages, questions and event cursors remain scoped to that member;
-the viewer-only transcript is not made available to agent tokens. Shared prompt,
-huddles, claims, news and patch metadata are still shared between both members.
-Agent dashboard task-news entries are limited to visible tasks; the existing
-team-wide MCP news endpoint and viewer transcript keep their prior behavior.
-Viewer tokens authorize only the existing transcript route, never write actions.
+The following controls document legacy agent access on the same dashboard.
+The existing AgentMesh theme, theme switch, access form and four-second polling
+remain. Agent access uses `GET /v1/dashboard/state?after=N`, with the snapshot
+structure plus `me` (the authenticated agent) and task `dashboard_status` values.
+Private messages, questions and event cursors remain scoped to that agent;
+`/v1/transcript` remains forbidden to agent tokens. Shared prompt, huddles, claims,
+news and patch metadata are still shared between both agents. Agent dashboard
+task-news entries are limited to visible tasks; the existing team-wide MCP news
+endpoint keeps its prior behavior. Member access uses unchanged hub writes for
+its controls and the scoped adapter for full default-team transcript data.
 Agent credentials are not persisted in local storage; sign-out clears private
 content and unsent drafts. Actions report errors without discarding drafts.
 
@@ -354,9 +357,9 @@ snapshot `feed_details` keyed by news ID, so later votes do not overwrite feed
 history. Older events without those details retain their original summaries.
 The existing news endpoint's response shape is unchanged.
 
-The legacy dashboard retains its fixed pair of members. New team creation,
-invite/join and removal/deletion are available through the `/api` hub below;
-team switching and multi-team viewer dashboards are not part of upstream 59105e5.
+Legacy agent access retains its fixed pair of members on the same page. New team
+creation, invite/join and removal/deletion are available through the `/api` hub
+below; team switching and multi-team dashboards are not part of upstream 59105e5.
 
 
 ## /api (OpenHuddle 59105e5)
@@ -385,8 +388,8 @@ agent-a as owner/lead and agent-b as member. Their hashes equal SHA-256 of the
 hub process/DO initialization the original active seed members' hashes reconcile
 to that first configured token, preserving IDs/member count. Removed members or
 a deleted seed team are never resurrected. Env/config secrets are seed-only for
-hub auth; `/v1` still accepts every configured rotation token. VIEWER_TOKEN is
-legacy-only and does not identify a hub member. A metadata table remembers the
+hub auth; `/v1` still accepts every configured agent rotation token. VIEWER_TOKEN
+is ignored by both servers and does not identify a hub member. A metadata table remembers the
 seed IDs, so other teams named default are never touched.
 
 The self-host stores `hub.db` next to unchanged `data.db` and private `config`.
@@ -459,10 +462,13 @@ Upstream creation/join, bad-auth and member rate tiers remain in effect.
 
 ### Pages and client boundary
 
-`/` serves the unified dashboard, accepting member access directly. `/index.html` keeps the unchanged sign-in page, accepting an access key (the token from setup) and an optional team ID.
-When no team ID is supplied, the page calls `GET /api/state` with `Authorization: Bearer <key>` and reads `team.id`.
-It then opens `/t/<team-id>#k=<key>`. That route and `/viewer` serve the same unified viewer page; `/viewer` retains the legacy Viewer/Agent access choices. These HTML routes
-are public and use fresh nonce CSP with no embedded credentials; on the Worker they require the configured dashboard hostname.
+`/` serves the single writable dashboard with one member-key/legacy-agent-token input.
+`/viewer` and `/index.html` return 302 redirects to `/`, not alternate pages. A typed root key
+first probes `GET /v1/dashboard/state`; a valid legacy agent token uses agent access.
+Otherwise the page calls `GET /api/state` with `Authorization: Bearer <key>` to discover `team.id`.
+A `/t/<team-id>#k=<member-key>` link explicitly requests member access, including seeded member keys
+that also authenticate as legacy agent tokens. The public page uses fresh nonce CSP with no embedded
+credentials; on the Worker root/index/viewer routes require the configured dashboard hostname.
 
 `/t/<tid>#k=<member token>` and `/join/<code>` are served **locally** by each host,
 using generated self-contained HTML with fresh nonce CSP and HTML-escaped
@@ -481,5 +487,5 @@ The setup wizard accepts invite URLs and preserves the config.env format.
 The client bin entry has a minimal config-boundary adaptation so the executable
 copied by upstream installApp also enters the same bootstrap and Access wrapper;
 upstream CLI commands, config machine stamps and tool implementations are unchanged.
-Legacy viewer mode remains at `/viewer` on the unified page; upstream has no multi-team viewer or
+The former viewer identity is removed; upstream has no multi-team dashboard or
 team token, nor dashboard remove/delete controls (CLI/API provide those).

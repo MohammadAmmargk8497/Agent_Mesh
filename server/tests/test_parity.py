@@ -13,8 +13,8 @@ def test_events_accept_worker_number_syntax(api, value):
     assert response.json() == {"events": [], "last_event_id": 0}
 
 
-def test_viewer_accepts_leading_zero_cursor_like_worker(api):
-    response = api.get("/v1/transcript?after=" + "0" * 200, "viewer")
+def test_dashboard_accepts_leading_zero_cursor_like_worker(api):
+    response = api.get("/v1/dashboard/state?after=" + "0" * 200)
     assert response.status == 200
     assert response.json()["last_event_id"] == 0
 

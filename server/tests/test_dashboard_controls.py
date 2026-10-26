@@ -4,7 +4,9 @@ import json
 import re
 import subprocess
 
+from agentmesh_server.config import init_config
 from test_dashboard import BROWSER_SMOKE, dashboard_document
+from test_hub_seed import running_hub
 
 # Keep the existing browser-safety harness authoritative. This adapter adds the
 # small pieces of native form behavior needed by write controls and forwards
@@ -95,12 +97,10 @@ function assertKnownRoutes(app) {
     assert.ok(button.dataset.action && button.dataset.route, 'every mutation button declares its tested action and route');
   }
 }
-async function login(app, role, mode = 'agent') {
-  const access = app.get('access-mode');
-  assert.ok(access, 'dashboard offers explicit viewer and agent access');
-  access.value = mode;
-  app.get('viewer-key').value = input.tokens[role];
-  app.get('viewer-form').fire('submit');
+async function login(app, role) {
+  assert.equal(app.get('access-mode'), null, 'one access form auto-detects writable credentials');
+  app.get('access-key').value = input.tokens[role];
+  app.get('access-form').fire('submit');
   await idle(app);
   assert.match(app.get('connection-status').textContent, /Live/);
 }
@@ -287,37 +287,34 @@ def test_dashboard_task_and_prompt_controls_call_real_routes(api):
 """, seed)
 
 
-def test_dashboard_viewer_mode_and_rejected_credentials_never_offer_writes(api):
-    _seed_controls(api)
-    _run_browser(api, r"""
+def test_dashboard_rejected_viewer_and_invalid_credentials_never_offer_writes(tmp_path):
+    directory = tmp_path / "dashboard-auth"
+    config = init_config(directory)
+    with running_hub(directory, config) as api:
+        _seed_controls(api)
+        _run_browser(api, r"""
   const app = browser();
-  app.get('viewer-key').value = 'short';
-  app.get('viewer-form').fire('submit');
+  assert.equal(app.get('access-mode'), null, 'viewer mode is not offered');
+  app.get('access-key').value = 'short';
+  app.get('access-form').fire('submit');
   assert.equal(app.calls.length, 0, 'short credentials are rejected without a request');
   assert.equal(app.get('auth-error').hidden, false);
-  await login(app, 'viewer', 'viewer');
-  assert.equal(app.calls[0].url, '/v1/transcript?after=0');
-  assert.equal(app.root.querySelectorAll('[data-write]').length, 0, 'viewer mode has no actionable write controls');
-  const huddle = app.get('huddle-list').querySelector('button');
-  assert.ok(huddle, 'viewer may still navigate huddles');
-  huddle.click();
-  assert.equal(app.get('huddle-view').hidden, false);
-  assert.equal(app.root.querySelectorAll('[data-write]').length, 0, 'opening a huddle does not grant writes');
-  await poll(app);
-  assert.ok(app.calls.every(call => (call.options.method || 'GET') === 'GET'), 'viewer makes GET requests only');
-  app.get('sign-out').click();
-  assert.equal(app.get('workspace').hidden, true);
-  assert.equal(app.timers.size, 0);
-  app.get('access-mode').value = 'agent';
-  app.get('viewer-key').value = 'x'.repeat(40);
-  app.get('viewer-form').fire('submit');
-  await idle(app);
-  assert.equal(app.get('auth').hidden, false, 'invalid agent credential returns to authentication');
-  assert.equal(app.get('workspace').hidden, true);
-  assert.equal(app.timers.size, 0);
-  assert.equal(app.root.querySelectorAll('[data-write]').length, 0);
-  assert.ok(app.calls.every(call => (call.options.method || 'GET') === 'GET'));
-""")
+  for (const token of [input.tokens.viewer, 'x'.repeat(40)]) {
+    app.get('access-key').value = token;
+    app.get('access-form').fire('submit');
+    await idle(app);
+    assert.equal(app.get('auth').hidden, false, 'removed viewer and invalid credentials stay at authentication');
+    assert.equal(app.get('workspace').hidden, true);
+    assert.equal(app.timers.size, 0);
+    assert.equal(app.root.querySelectorAll('[data-write]').length, 0, 'rejected credentials never expose write controls');
+    assert.equal(app.get('messages').textContent, '');
+    assert.equal(app.get('member-heartbeats').textContent, '');
+    assert.equal(app.storage.has('agentmesh-viewer'), false);
+  }
+  assert.ok(app.calls.some(call => call.url.startsWith('/v1/dashboard/state') && call.status === 401), 'viewer token is rejected by agent authentication');
+  assert.ok(!app.calls.some(call => call.url.startsWith('/v1/transcript')), 'removed viewer transcript is never requested');
+  assert.ok(app.calls.every(call => (call.options.method || 'GET') === 'GET'), 'credential detection cannot mutate state');
+        """)
 
 
 def test_dashboard_huddles_questions_claims_settings_and_commit_events(api):

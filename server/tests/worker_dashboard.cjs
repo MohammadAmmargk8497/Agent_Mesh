@@ -78,7 +78,9 @@ const createTask = async (role = 'a', assignee = 'agent-b', extras = {}) => (awa
   const base = '/v1/huddles/' + huddle;
   assert.deepEqual((await get('/v1/dashboard/state')).huddles[0].waiting_on, ['agent-b']);
   assert.deepEqual((await get(base)).huddle.waiting_on, ['agent-a', 'agent-b']);
-  const legacyTranscriptHuddle = (await get('/v1/transcript', 'viewer')).huddles[0];
+  const legacyTranscriptHuddle = (await (await room.fetch(new Request('https://mesh.example/internal/transcript', {
+    headers: { 'x-agentmesh-agent': 'legacy-adapter' },
+  }))).json()).huddles[0];
   assert.deepEqual(legacyTranscriptHuddle.waiting_on, ['agent-a', 'agent-b']);
   assert.deepEqual(legacyTranscriptHuddle.dashboard_waiting_on, ['agent-b']);
   const idea = (await post(base + '/posts', { kind: 'idea', text: 'A typed API' }, 'a', 201)).id;
@@ -86,13 +88,16 @@ const createTask = async (role = 'a', assignee = 'agent-b', extras = {}) => (awa
   const task = await createTask(), taskBase = '/v1/dashboard/tasks/' + task;
   for (const route of [base + '/comments', base + '/votes', ...actions.map(a => taskBase + '/' + a)]) {
     await post(route, {}, null, 401);
-    await post(route, {}, 'viewer', 403);
+    await post(route, {}, 'viewer', 401);
     await post(route, '[]', 'b', 400);
     await post(route, '{', 'b', 400);
     await post(route, 'x'.repeat(256 * 1024 + 1), 'b', 413);
   }
   await get('/v1/dashboard/state', null, 401);
-  await get('/v1/dashboard/state', 'viewer', 403);
+  await get('/v1/dashboard/state', 'viewer', 401);
+  await get('/v1/transcript', 'viewer', 401);
+  await get('/v1/transcript', 'a', 403);
+  await get('/v1/whoami', 'viewer', 401);
   await get('/v1/dashboard/state?after=no', 'a', 400);
   await get('/v1/dashboard/state?after=9007199254740992', 'a', 400);
   await get(taskBase + '/take', 'a', 405);
@@ -191,7 +196,11 @@ const createTask = async (role = 'a', assignee = 'agent-b', extras = {}) => (awa
   assert.ok(scoped.events.every(e => e.recipient === 'agent-a'));
   assert.ok(scoped.audit.every(a => a.actor === 'agent-a'));
   assert.ok(scoped.questions.every(q => q.sender === 'agent-a' || q.recipient === 'agent-a'));
-  assert.ok((await get('/v1/transcript', 'viewer')).tasks.some(t => t.id === privateTask));
+  const fullTranscript = await room.fetch(new Request('https://mesh.example/internal/transcript', {
+    headers: { 'x-agentmesh-agent': 'legacy-adapter' },
+  }));
+  assert.equal(fullTranscript.status, 200);
+  assert.ok((await fullTranscript.json()).tasks.some(t => t.id === privateTask));
 
   await post(base + '/close', { decision: 'Use typed API' });
   await post(base + '/comments', { text: 'Too late' }, 'b', 409);

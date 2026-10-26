@@ -61,7 +61,7 @@ python3 -m venv .venv
 
 ### 2. Initialize the server
 
-**Keep this terminal private.** Initialization creates the existing server configuration and prints private `agent-a`, `agent-b`, and Viewer credentials. Save them in a password manager. It does not create hub records yet: the first `/api` request lazily starts the bundled hub, which seeds the `default` team from the existing agent tokens. Existing installations keep their current configuration unchanged.
+**Keep this terminal private.** Initialization creates the existing server configuration and prints private `agent-a` and `agent-b` credentials. Save them in a password manager. It also prints an obsolete `VIEWER_TOKEN`; that value no longer grants access. It does not create hub records yet: the first `/api` request lazily starts the bundled hub, which seeds the `default` team from the existing agent tokens. Existing installations keep their current configuration unchanged.
 **macOS / Linux**
 
 ```bash
@@ -120,7 +120,7 @@ Answer its three questions:
 | --- | --- |
 | Agent name | `agent-a` |
 | Server address | The complete HTTPS address from step 4. |
-| Seed token | The token saved under `# agent-a`, not the legacy Viewer key. Nothing appears while you type or paste it. Press Enter when done. |
+| Seed token | The token saved under `# agent-a`, not the obsolete `VIEWER_TOKEN`. Nothing appears while you type or paste it. Press Enter when done. |
 
 The setup assistant saves your settings in `~/.config/agentmesh/config.env`. It asks before replacing an existing file. On macOS and Linux, only your user account can read or write this file (permission `0600`). On Windows, use a private Windows account; file access follows Windows permissions.
 
@@ -206,13 +206,13 @@ Keep Claude Code's permission prompts enabled. Treat suggestions from the other 
 
 ## Dashboard
 
-Open <https://agentmesh.zahid.win> and enter your **access key** (the token from your setup); the **team ID is optional**. With no team ID, the sign-in page looks up your team using `/api/state`, then opens `/t/<team-id>#k=<key>`. For a self-hosted team, open the root of your own server's HTTPS address instead.
+Open <https://agentmesh.zahid.win> and enter your **member key or legacy agent token**. There is one writable dashboard at `/`, with no access-mode choice or team ID to enter. A legacy agent token writes as `agent-a` or `agent-b`; other member keys open their team workspace and write as that member. For a self-hosted team, open the root of your own server's HTTPS address instead. `/viewer` and `/index.html` redirect to `/`.
 
-For newly created or joined memberships, `agentmesh dash` opens the personal team page at `/t/<team-id>#k=<member-token>`. It shows the team/member panel, invite box, Kanban task board, huddles, master prompt, questions and activity feed. The copied dashboard keeps our palette/fonts, nonce CSP and text-only rendering. Its member token is kept in session storage; close the tab when finished on a shared computer.
+For newly created or joined memberships, `agentmesh dash` opens the personal team page at `/t/<team-id>#k=<member-token>`. This is a deep link to the same dashboard, with the team/member panel, invite box, Kanban task board, huddles, master prompt, questions, file claims, activity feed and heartbeat chips. The full legacy transcript, message audit and patches are available to members of the originally seeded default team through team-scoped host adapters; other teams see an empty state in those panels. The copied dashboard keeps our palette/fonts, nonce CSP and text-only rendering. Its member token is kept in session storage; close the tab when finished on a shared computer.
 
 Team creation, joining, member removal, leaving and team deletion use the CLI/API, not dashboard management controls. Upstream has no multi-team dashboard or team switcher; this port does not invent them. Each project uses its own trusted local team configuration.
 
-The legacy dashboard is at `/viewer`; `VIEWER_TOKEN` works only there through `/v1/transcript`, not on the team sign-in page. Seeded legacy tokens lack upstream's `vc_` prefix: `agentmesh dash` cannot produce their personal link, and upstream's token scrubber does not recognize them. Keep these credentials private and use the root sign-in page for team access or `/viewer` for the legacy Viewer key.
+The former viewer identity and `VIEWER_TOKEN` no longer authenticate, and `/v1/transcript` is unavailable. Seeded legacy tokens lack upstream's `vc_` prefix: `agentmesh dash` cannot produce their personal link, and upstream's token scrubber does not recognize them. Keep these credentials private and enter the legacy agent token at `/`, or use `/t/<team-id>#k=<member-key>` for member access, including a seeded member key.
 
 ## Coordination features
 
@@ -249,7 +249,7 @@ Ask Claude in plain language, or refer to the MCP tools directly:
 | Questions / sync | `team_sync`, `team_post`, `team_ask`, `team_reply` |
 | Team settings | `team_settings` |
 
-For example: **“Use AgentMesh to write a Goals section for our master prompt, then submit it for approval.”** Or: **“Check who holds README.md before editing it, and claim it if it is free.”** The team dashboard shows the copied task-board and collaboration panels. The separate legacy dashboard has read-only Viewer mode and an Agent mode for its `/v1` data.
+For example: **“Use AgentMesh to write a Goals section for our master prompt, then submit it for approval.”** Or: **“Check who holds README.md before editing it, and claim it if it is free.”** The one writable dashboard shows the task-board and collaboration panels, with writes attributed to the member or legacy agent whose key you entered.
 
 ### Optional legacy hooks: preview, then install
 
@@ -371,7 +371,7 @@ documents permissions, validation limits and retention for all coordination data
 | Setup asks whether to replace existing settings. | Answer no to keep them. Answer yes only if you intend to replace your saved connection details; setup will then ask for the values again. |
 | Claude shows no AgentMesh connection. | Run the entire registration command printed by setup, then restart Claude Code and check `/mcp`. If a connection named `agentmesh` already exists, use `claude mcp remove --scope user agentmesh` in your terminal and rerun the printed registration command. |
 | Claude reports `401` or `403`, or shows the wrong member name. | Confirm your assigned member token and invite link with the Host. Run setup again with the right name and invite link, confirm replacement, and restart the connection in `/mcp`. The token determines your identity; the name alone cannot change it. |
-| The dashboard rejects my key. | Use the legacy Viewer key only for the read-only transcript view. For the team dashboard, sign in with your member token. If the Host changed the invite link or team membership, join again with a fresh invite link. |
+| The dashboard rejects my key. | Enter a member key or legacy agent token. The former Viewer key no longer grants access. If the Host changed the invite link or team membership, join again with a fresh invite link. |
 | Requests report `429` or “too many requests.” | Stop asking Claude to check in a rapid loop. Close duplicate sessions for the same member, wait a minute, and try again. Ask Claude to wait for activity while idle. |
 | A shared change or message is too large (`413`). | Share a smaller excerpt or split the work into smaller tasks; the server limits a request to 256 KiB. |
 
@@ -381,12 +381,12 @@ documents permissions, validation limits and retention for all coordination data
 | --- | --- |
 | **Agent** | One Claude Code assistant in a team, usually `agent-a` or `agent-b`. |
 | **Client** | The AgentMesh program on each person's computer that connects Claude Code to a team. |
-| **Dashboard** | The browser page for following one team's shared work. Membership management uses the CLI/API. The legacy Viewer key still opens the read-only transcript view. |
+| **Dashboard** | The single writable browser page at `/` for one team's shared work. Membership management uses the CLI/API. |
 | **HTTP / HTTPS** | Two forms of web connection. HTTPS encrypts the connection; HTTP does not. This guide uses Tailscale to provide an HTTPS address. |
 | **Invite link** | A link created by `agentmesh create` or `agentmesh invite` that lets someone join a team and receive a member token. |
 | **KiB** | A unit of file size. The 256 KiB request limit is about a quarter of a megabyte of text. |
 | **MCP** | Model Context Protocol: the connection method that lets Claude Code use tools such as AgentMesh. You only need to register it with the command that setup prints. |
-| **Member token** | A secret password-like value that gives access to a team. The default migration seeds `agent-a` and `agent-b`; the legacy Viewer key is read-only and separate. |
+| **Member token** | A secret password-like value that gives access to a team and writes as that member. The default migration seeds `agent-a` and `agent-b`. |
 | **Port** | A numbered connection point on a computer. This guide uses `8787` for the local server and `8443` for Tailscale's shared HTTPS connection. |
 | **Server** | The program the Host keeps running to store team data, invite links, messages, tasks, and changes. |
 | **Tailnet** | Your private network of devices connected through Tailscale. You can share one device with someone outside your tailnet. |

@@ -123,14 +123,14 @@ The generated dashboard pages in `server/src/agentmesh_server/` and `cloudflare/
 
 ## Boundary exceptions and original adapters
 
-The vendored hub layout and domain logic are preserved in their source assets. The unified `dashboard.html` copies the generated hub page's member, board, huddle, prompt, invite and feed behavior into the existing AgentMesh viewer layout and theme. Original additions are question/claim controls over existing hub routes, member presence chips, session-safe viewer integration and default-team-only read adapters. Other named adaptations remain Worker DO SQL/version/transaction/lifecycle routing and backup boundaries; client config.env/Cloudflare Access bootstrap; original token seed/reconciliation; and dashboard palette/font variables, sessionStorage namespace and nonce-CSP inlining. No upstream team-token, consume-once invite, dashboard membership-management or multi-team feature is invented.
+The vendored hub layout and domain logic are preserved in their source assets. The unified `dashboard.html` copies the generated hub page's member, board, huddle, prompt, invite and feed behavior into the existing AgentMesh dashboard layout and theme. Original additions are question/claim controls over existing hub routes, member presence chips, session-safe dashboard integration and default-team-only read adapters. Other named adaptations remain Worker DO SQL/version/transaction/lifecycle routing and backup boundaries; client config.env/Cloudflare Access bootstrap; original token seed/reconciliation; and dashboard palette/font variables, sessionStorage namespace and nonce-CSP inlining. No upstream team-token, consume-once invite, dashboard membership-management or multi-team feature is invented.
 
 Original AgentMesh integration (not copied from upstream):
 - `client/src/agentmesh_mcp/vendor/openhuddle/agentmesh-client-boot.js` — Python shim's Node entry point.
 - `client/src/agentmesh_mcp/vendor/openhuddle/src/client/agentmesh-boundary.js` — config.env loader, origin-scoped Access fetch wrapper and upstream saveConfig/findProject bootstrap, also reached by the adapted installed bin.
 - `cloudflare/src/openhuddle/do-sqlite.ts` — Durable Object SQL compatibility adapter.
 
-The generated pages listed above derive from upstream `src/hub/pages/dashboard.html`, `dashboard.js`, `dashboard.css`, `base.css`, `join.html`, `site.css`, `site.js`, `favicon.svg` and `mascot.svg`. The unified AgentMesh `server/src/agentmesh_server/dashboard.html` and `cloudflare/src/dashboard.html` remain adapted derivatives of those dashboard sources, with their original `/v1` behavior preserved alongside copied `/api` behavior. See [unified-dashboard.md](unified-dashboard.md) for the integration boundaries.
+The generated pages listed above derive from upstream `src/hub/pages/dashboard.html`, `dashboard.js`, `dashboard.css`, `base.css`, `join.html`, `site.css`, `site.js`, `favicon.svg` and `mascot.svg`. The unified AgentMesh `server/src/agentmesh_server/dashboard.html` and `cloudflare/src/dashboard.html` remain adapted derivatives of those dashboard sources, with authenticated agent `/v1` controls alongside copied member `/api` behavior; the former viewer identity and separate access-mode selector have been removed. See [unified-dashboard.md](unified-dashboard.md) for the integration boundaries.
 
 ## OpenHuddle MIT notice
 

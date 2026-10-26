@@ -1,6 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
 import dashboard from "./dashboard.html";
-import signin from "./signin.html";
 import hubDashboard from "./hub_dashboard.html";
 import hubJoin from "./hub_join.html";
 export { HubRoom } from "./openhuddle/hub-room";
@@ -13,7 +12,6 @@ interface Env {
   // Comma-separated to allow rotation: "new,old". Each token must be >= 32 chars.
   AGENT_A_TOKEN: string;
   AGENT_B_TOKEN: string;
-  VIEWER_TOKEN?: string;
   LIMITER?: RateLimit;
 }
 type Agent = "agent-a" | "agent-b";
@@ -53,9 +51,9 @@ function optionalId(v: unknown): string | null {
 
 const sha256 = (s: string) => crypto.subtle.digest("SHA-256", new TextEncoder().encode(s));
 // Constant-time comparison of hashes so response timing doesn't leak token bytes.
-async function identify(token: string, env: Env): Promise<Agent | "viewer" | null> {
+async function identify(token: string, env: Env): Promise<Agent | null> {
   const presented = await sha256(token);
-  for (const [agent, secret] of [["agent-a", env.AGENT_A_TOKEN], ["agent-b", env.AGENT_B_TOKEN], ["viewer", env.VIEWER_TOKEN]] as const) {
+  for (const [agent, secret] of [["agent-a", env.AGENT_A_TOKEN], ["agent-b", env.AGENT_B_TOKEN]] as const) {
     for (const candidate of (secret ?? "").split(",").map(s => s.trim())) {
       if (candidate.length >= 32 && crypto.subtle.timingSafeEqual(presented, await sha256(candidate))) return agent;
     }
@@ -68,7 +66,7 @@ async function identify(token: string, env: Env): Promise<Agent | "viewer" | nul
 async function legacyAdapter(request: Request, env: Env, ip: string): Promise<Response> {
   const url = new URL(request.url);
   const path = url.pathname.slice("/api/legacy".length);
-  if (request.method !== "GET") return error("legacy panels are read-only", 405);
+  if (request.method !== "GET") return error("method not allowed", 405);
   if (path !== "/transcript" && path !== "/patches" && !/^\/patches\/[0-9a-f-]{36}$/i.test(path)) return error("not found", 404);
   const hub = env.HUB.get(env.HUB.idFromName("openhuddle-hub"));
   const stateFor = (token: string) => hub.fetch(new Request(url.origin + "/api/state", {
@@ -96,12 +94,12 @@ async function legacyAdapter(request: Request, env: Env, ip: string): Promise<Re
     if (defaultTeam) legacyTeams.set(env, defaultTeam);
   }
   if (!defaultTeam || team !== defaultTeam) return error("legacy panels are available only for the default team", 403);
-  const legacyUrl = new URL("/v1" + path, url.origin);
+  const legacyUrl = new URL(path === "/transcript" ? "/internal/transcript" : "/v1" + path, url.origin);
   if (url.searchParams.has("after")) legacyUrl.searchParams.set("after", url.searchParams.get("after")!);
-  // Only this fixed read-only allowlist can enter the legacy room; caller-supplied
+  // Only this fixed GET allowlist can enter the legacy room; caller-supplied
   // identity headers and hub credentials are never forwarded to it.
   return env.ROOM.get(env.ROOM.idFromName("default-room")).fetch(new Request(legacyUrl, {
-    headers: { "x-agentmesh-agent": path === "/transcript" ? "viewer" : "agent-a" },
+    headers: { "x-agentmesh-agent": path === "/transcript" ? "legacy-adapter" : "agent-a" },
   }));
 }
 
@@ -148,9 +146,9 @@ export default {
     const dashboardHost = url.hostname === "agentmesh.zahid.win";
     if (dashboardHost && (request.method === "GET" || request.method === "HEAD") &&
         (url.pathname === "/" || url.pathname === "/index.html" || url.pathname === "/viewer")) {
+      if (url.pathname !== "/") return new Response(null, { status: 302, headers: { location: "/", "cache-control": "no-store" } });
       const nonce = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(16))));
-      const page = url.pathname === "/index.html" ? signin : dashboard;
-      return new Response(request.method === "HEAD" ? null : page.replaceAll("__AGENTMESH_NONCE__", nonce), { headers: {
+      return new Response(request.method === "HEAD" ? null : dashboard.replaceAll("__AGENTMESH_NONCE__", nonce), { headers: {
         "content-type": "text/html; charset=utf-8",
         "cache-control": "no-store",
         "x-content-type-options": "nosniff",
@@ -161,8 +159,6 @@ export default {
     const header = request.headers.get("authorization") ?? "";
     const token = header.startsWith("Bearer ") ? header.slice(7).trim() : "";
     const agent = token ? await identify(token, env) : null;
-    if (agent === "viewer" && (url.pathname !== "/v1/transcript" || request.method !== "GET"))
-      return error("viewer is read-only", 403);
     if (url.pathname === "/health" && request.method === "GET")
       return json({ ok: true, service: "agentmesh" });
     // Unauthenticated callers are limited per IP (slows token guessing / abuse); agents per identity.
@@ -264,14 +260,14 @@ export class Room extends DurableObject<Env> {
     const url = new URL(request.url);
     const path = url.pathname.replace(/\/+$/, "") || "/";
     const method = request.method.toUpperCase();
-    const agent = request.headers.get("x-agentmesh-agent") as Agent | "viewer";
+    const agent = request.headers.get("x-agentmesh-agent") as Agent | "legacy-adapter";
 
     try {
-      // Viewer snapshots never enter agent helpers, mutation paths, or WebSocket handling.
+      // Only the team-authenticated adapter can request a full legacy snapshot.
+      const legacySnapshot = agent === "legacy-adapter" && path === "/internal/transcript" && method === "GET";
       const dashboardState = path === "/v1/dashboard/state" && method === "GET";
-      if (agent === "viewer" || dashboardState) {
-        if (agent === "viewer" && (path !== "/v1/transcript" || method !== "GET")) return error("viewer is read-only", 403);
-        if (agent !== "viewer" && !AGENTS.includes(agent)) return error("invalid agent context", 401);
+      if (legacySnapshot || dashboardState) {
+        if (!legacySnapshot && !AGENTS.includes(agent as Agent)) return error("invalid agent context", 401);
         const rawAfter = url.searchParams.get("after");
         const after = Number(rawAfter ?? 0);
         if ((rawAfter !== null && !/^-?\d+$/.test(rawAfter)) || !Number.isSafeInteger(after))
@@ -286,7 +282,7 @@ export class Room extends DurableObject<Env> {
             if (dashboardState) task.dashboard_status = this.coordination.dashboardStatus(task);
             return task;
           });
-        const snapshot = this.coordination.snapshot(Date.now(), agent === "viewer" ? undefined : agent);
+        const snapshot = this.coordination.snapshot(Date.now(), legacySnapshot ? undefined : agent as Agent);
         return json({
           messages: (dashboardState
             ? this.sql("SELECT * FROM messages WHERE sender=? OR recipient=? ORDER BY created_at DESC LIMIT 500", agent, agent)
@@ -302,8 +298,8 @@ export class Room extends DurableObject<Env> {
           ...(dashboardState ? { me: agent } : {}),
         });
       }
-      if (!AGENTS.includes(agent)) return error("invalid agent context", 401);
-      if (path === "/v1/transcript") return error("viewer token required", 403);
+      if (agent === "legacy-adapter" || !AGENTS.includes(agent)) return error("invalid agent context", 401);
+      if (path === "/v1/transcript") return error("team member key required", 403);
       const now = Date.now();
       // Additive authenticated routes: /v1/master, /v1/huddles, /v1/claims, /v1/news.
       const coordinationResponse = await this.coordination.route(request, agent, path, method, url, now);

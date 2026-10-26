@@ -76,14 +76,19 @@ def test_dashboard_uses_text_nodes_not_html_insertion_for_transcript():
     assert not re.search(r"\bdocument\s*\.\s*(?:write|writeln)\s*\(", scripts)
 
 
-def test_dashboard_keeps_existing_viewer_controls_and_theme():
+def test_dashboard_keeps_writable_access_controls_and_theme():
     html, document = dashboard_document()
     ids = {attrs["id"]: (tag, attrs) for tag, attrs in document.elements if "id" in attrs}
-    for control in ("theme-toggle", "sign-out", "viewer-form", "viewer-key", "auth-error", "connection-status"):
+    for control in ("theme-toggle", "sign-out", "access-form", "access-key", "auth-error", "connection-status"):
         assert control in ids
-    assert ids["viewer-key"][1].get("type") == "password"
-    assert ids["viewer-key"][1].get("autocomplete") == "off"
-    assert '"/v1/transcript?after="' in html
+    assert ids["access-key"][1].get("type") == "password"
+    assert ids["access-key"][1].get("autocomplete") == "off"
+    assert '"/v1/dashboard/state?after="' in html
+    assert '/api/legacy/transcript' in html
+    assert 'access-mode' not in ids
+    assert 'viewer-form' not in ids
+    assert 'viewer-key' not in ids
+    assert not re.search(r'read[- ]only|value=[\"\']viewer[\"\']', html, re.IGNORECASE)
     assert 'Authorization: "Bearer "' in html
     for color in ("#f4f5f0", "#101613", "#087e64", "#cf5c26", "#080b0d", "#77f4d0", "#ff8b51"):
         assert color in html.lower()
@@ -222,27 +227,27 @@ function browser(snapshot) {
 
 const flush = () => new Promise(resolve => setImmediate(resolve));
 async function login(app) {
-  app.get('viewer-key').value = 'v'.repeat(40);
-  app.get('viewer-form').fire('submit');
+  app.get('access-key').value = 'a'.repeat(40);
+  app.get('access-form').fire('submit');
   await flush();
 }
 
 (async () => {
   const app = browser(input.snapshot), get = app.get;
-  assert.equal(app.calls.length, 0, 'no transcript request before a viewer key');
+  assert.equal(app.calls.length, 0, 'no authenticated request before a credential');
   assert.equal(get('workspace').hidden, true);
   assert.equal(app.document.documentElement.getAttribute('data-theme'), 'dark');
   get('theme-toggle').click();
   assert.equal(app.document.documentElement.getAttribute('data-theme'), 'light');
   assert.equal(app.storage.get('papers-theme'), 'light');
-  get('viewer-key').value = 'short'; get('viewer-form').fire('submit');
+  get('access-key').value = 'short'; get('access-form').fire('submit');
   assert.equal(app.calls.length, 0, 'short keys must not make a request');
   assert.equal(get('auth-error').hidden, false);
   await login(app);
   assert.match(get('connection-status').textContent, /Live/);
   assert.equal(get('workspace').hidden, false);
-  assert.equal(app.calls[0].url, '/v1/transcript?after=0');
-  assert.equal(app.calls[0].options.headers.Authorization, 'Bearer ' + 'v'.repeat(40));
+  assert.equal(app.calls[0].url, '/v1/dashboard/state?after=0');
+  assert.equal(app.calls[0].options.headers.Authorization, 'Bearer ' + 'a'.repeat(40));
   assert.equal(app.calls[0].options.cache, 'no-store');
   assert.equal(app.calls[0].options.method ?? 'GET', 'GET');
   for (const id of ['messages', 'tasks', 'master', 'huddle-list', 'claims', 'questions', 'news', 'patches']) {
@@ -280,12 +285,12 @@ async function login(app) {
   get('huddle-back').click();
   assert.equal(get('huddle-list').hidden, false);
   assert.equal(get('huddle-view').hidden, true);
-  assert.equal(app.calls.length, 1, 'read-only huddle navigation needs no additional endpoint');
+  assert.equal(app.calls.length, 1, 'huddle navigation needs no additional endpoint');
   const details = get('tasks').querySelector('details'); details.open = true;
   input.snapshot.tasks[0].title += ' updated';
   await [...app.timers.values()][0]();
   assert.match(get('connection-status').textContent, /Live/);
-  assert.equal(app.calls[1].url, '/v1/transcript?after=' + input.snapshot.last_event_id);
+  assert.equal(app.calls[1].url, '/v1/dashboard/state?after=' + input.snapshot.last_event_id);
   assert.equal(get('tasks').querySelector('details').open, true, 'polls preserve expanded task details');
   get('sign-out').click();
   assert.equal(get('workspace').hidden, true);
@@ -299,14 +304,14 @@ async function login(app) {
   assert.equal(get('auth').hidden, false);
   assert.equal(app.storage.has('agentmesh-viewer'), false);
   assert.equal(app.timers.size, 0);
-  assert.match(get('auth-error').textContent, /viewer key/i);
+  assert.match(get('auth-error').textContent, /member key|agent token/i);
   for (const call of app.calls) {
-    assert.match(call.url, /^\/v1\/transcript\?after=\d+$/);
+    assert.match(call.url, /^\/v1\/dashboard\/state\?after=\d+$/);
     assert.equal(call.options.method ?? 'GET', 'GET');
     assert.ok(call.options.headers.Authorization.startsWith('Bearer '));
   }
 
-  const old = browser({messages: [], tasks: [], patches: [], audit: [], events: [], last_event_id: 0});
+  const old = browser({me: 'agent-a', messages: [], tasks: [], patches: [], audit: [], events: [], last_event_id: 0});
   await login(old);
   assert.match(old.get('connection-status').textContent, /Live/, 'legacy snapshots must still render');
   const raced = browser(input.snapshot); await login(raced);
@@ -315,12 +320,12 @@ async function login(app) {
   assert.equal(raced.calls[1].options.signal.aborted, true);
   assert.equal(raced.get('workspace').hidden, true, 'a stale response must not reopen a signed-out session');
   assert.equal(raced.get('messages').textContent, '', 'a stale response must not restore private transcript text');
-  console.log('Dashboard data binding, text safety, navigation, theme and viewer sessions passed');
+  console.log('Dashboard data binding, text safety, navigation, theme and agent sessions passed');
 })().catch(error => { console.error(error); process.exitCode = 1; });
 """
 
 
-def test_dashboard_binds_real_transcript_and_preserves_viewer_session(api):
+def test_dashboard_binds_real_agent_state_and_preserves_session(api):
     unsafe = '<img src=x onerror="globalThis.injected=true"><script>bad()</script>'
     long_question = unsafe + " Please explain the longer implementation details." * 12
     task = api.post("/v1/tasks", {
@@ -343,7 +348,7 @@ def test_dashboard_binds_real_transcript_and_preserves_viewer_session(api):
     assert api.post(path, {"kind": "back", "text": unsafe, "ref_post_id": second_idea.json()["id"]}, "b").status == 201
     assert api.post("/v1/claims", {"path": "src/" + unsafe}).status == 201
     assert api.post("/v1/questions", {"to": "agent-b", "text": long_question}).status == 201
-    transcript = api.get("/v1/transcript", "viewer")
+    transcript = api.get("/v1/dashboard/state", "a")
     assert transcript.status == 200
     html, document = dashboard_document()
     payload = {
