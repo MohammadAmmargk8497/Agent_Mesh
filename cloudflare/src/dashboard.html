@@ -35,7 +35,7 @@
     .masthead{display:flex;align-items:center;justify-content:space-between;gap:20px;border-bottom:1px solid var(--line);padding-bottom:16px}
     .brand{display:flex;align-items:center;gap:14px;min-width:0}
     .brand-mark{width:42px;height:42px;flex-shrink:0;color:var(--cyan)}
-    .eyebrow,.meta,.badge,.count,.panel-label,.footer{font-family:"JetBrains Mono",monospace;font-size:11px}
+    .eyebrow,.meta,.badge,.count,.panel-label{font-family:"JetBrains Mono",monospace;font-size:11px}
     .eyebrow{color:var(--cyan);letter-spacing:.15em;text-transform:uppercase}
     h1{font:400 32px/1.1 Newsreader,Georgia,serif;letter-spacing:-.04em;margin:4px 0}
     .subtitle{margin:0;color:var(--muted)}
@@ -184,7 +184,6 @@
     .action-status{margin:12px 0;padding:10px 14px;border:1px solid var(--line);border-radius:8px;color:var(--cyan);overflow-wrap:anywhere;white-space:pre-wrap}
     .action-status.error{color:var(--orange);border-color:var(--orange)}
     .setting{display:flex;gap:7px;align-items:center;font-size:12px;margin-top:10px}
-    .footer{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;color:var(--dim);margin-top:17px;font-size:10px}
     @container(max-width:860px){.board{grid-template-columns:repeat(2,minmax(0,1fr))}}
     @container(max-width:460px){.board{grid-template-columns:1fr}}
     @media(max-width:1280px){
@@ -234,7 +233,7 @@
         <svg class="brand-mark" viewBox="0 0 48 48" fill="none" aria-hidden="true"><path d="M12 12 36 24 12 36Z" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="12" r="5" fill="currentColor"/><circle cx="36" cy="24" r="5" fill="currentColor"/><circle cx="12" cy="36" r="5" fill="currentColor"/></svg>
         <div><div class="eyebrow">AgentMesh / Shared workspace</div>
         <h1>A conversation in motion.</h1>
-        <p id="access-description" class="subtitle">Two agents. One shared workspace. A read-only view.</p></div>
+        <p id="access-description" class="subtitle">One shared workspace. Participate with your member key or agent token.</p></div>
       </div>
       <div class="actions">
         <button id="theme-toggle" type="button">Dark theme</button>
@@ -242,7 +241,7 @@
       </div>
     </header>
     <div class="connection">
-      <span id="connection-status" class="status meta" role="status">Viewer key required</span>
+      <span id="connection-status" class="status meta" role="status">Access key required</span>
       <div class="legend meta"><span class="agent-a">● agent-a</span><span class="agent-b">● agent-b</span></div>
       <div id="member-heartbeats" class="heartbeats meta" aria-label="Member connections" hidden></div>
       <span class="meta">Last updated <time id="last-updated">—</time></span>
@@ -250,12 +249,10 @@
     <section id="auth" class="auth" aria-labelledby="auth-title">
       <div class="eyebrow">Workspace access</div>
       <h2 id="auth-title">Take a seat.</h2>
-      <p>Use your member key to participate in your team, a viewer key to follow along, or a legacy agent token. Sign out to clear access from this browser.</p>
-      <form id="viewer-form">
-        <label for="access-mode">Access mode</label>
-        <select id="access-mode"><option value="member">Member · team workspace</option><option value="viewer">Viewer · read-only</option><option value="agent">Agent · participate</option></select>
-        <label for="viewer-key">Member key, viewer key or agent token</label>
-        <input id="viewer-key" name="viewer-key" type="password" required minlength="32" autocomplete="off" spellcheck="false" aria-describedby="auth-error">
+      <p>Use your member key to participate in your team, or a legacy agent token to act as agent-a or agent-b. Sign out to clear access from this browser.</p>
+      <form id="access-form">
+        <label for="access-key">Member key or agent token</label>
+        <input id="access-key" name="access-key" type="password" required minlength="32" autocomplete="off" spellcheck="false" aria-describedby="auth-error">
         <p id="auth-error" class="auth-error" role="alert" hidden></p>
         <button type="submit">Open dashboard</button>
       </form>
@@ -263,7 +260,7 @@
     <p id="action-status" class="action-status" role="status" aria-live="polite" hidden></p>
     <section id="asks" class="asks" aria-labelledby="asks-title" hidden>
       <h2 id="asks-title">Waiting on the team</h2><ul id="asks-list"></ul>
-      <p id="asks-hint" class="hint">Your agents handle questions, ideas and votes from their own sessions. This dashboard is read-only.</p>
+      <p id="asks-hint" class="hint">Respond to questions, ideas and votes below or from your agent session.</p>
     </section>
     <main id="workspace" class="workspace" hidden>
       <aside class="col col-team" aria-label="Team and coordination">
@@ -327,7 +324,6 @@
         </section>
       </aside>
     </main>
-    <footer class="footer"><span id="access-footer">Read-only · Full snapshots every 4 seconds</span><span>Latest 500 messages / 200 tasks / 50 patches · retention applies</span></footer>
   </div>
   <script nonce="__AGENTMESH_NONCE__">
     (() => {
@@ -356,7 +352,7 @@
       const empty = (container, text) => container.append(element("p", "empty", text));
       let key = "", lastEventId = 0, session = 0, timer = null, controller = null;
       let rendered = {}, snapshot = null, selectedHuddle = null;
-      let accessMode = "viewer", me = null, writing = false, writeController = null;
+      let accessMode = "auto", me = null, writing = false, writeController = null;
       const drafts = new Map(), editingSections = new Set();
       const agents = ["agent-a", "agent-b"];
       const shortId = (value) => String(value || "—").slice(0, 8);
@@ -378,7 +374,7 @@
         const task = snapshot && snapshot.tasks.find((row) => row.id === id);
         return shortId(id) + (task ? " · " + task.title : "");
       };
-      const canWrite = () => accessMode === "agent" && agents.includes(me) && Boolean(key);
+      const canWrite = () => agents.includes(me) && Boolean(key);
       const routeId = (id) => encodeURIComponent(id);
       const fieldId = (kind, id) => kind + "-" + encodeURIComponent(id);
       function actionStatus(message = "", error = false) {
@@ -570,7 +566,7 @@
         const legend = document.querySelectorAll(".legend")[0];
         if (legend) legend.hidden = false;
         actionStatus();
-        get("viewer-key").value = "";
+        get("access-key").value = "";
         get("workspace").hidden = true;
         get("coordination").hidden = true;
         get("asks").hidden = true;
@@ -582,14 +578,13 @@
         get("last-updated").removeAttribute("datetime");
         for (const id of ["messages", "tasks", "patches", "audit", "master", "huddle-create", "huddle-list", "huddle-view", "claim-create", "question-create", "claims", "questions", "news", "members", "rules", "asks-list"]) get(id).replaceChildren();
         for (const id of ["huddle-create", "claim-create", "question-create"]) get(id).hidden = true;
-        get("access-description").textContent = "Two agents. One shared workspace. A read-only view.";
-        get("access-footer").textContent = "Read-only · Full snapshots every 4 seconds";
+        get("access-description").textContent = "One shared workspace. Participate with your member key or agent token.";
         get("huddle-list").hidden = false;
         get("huddle-view").hidden = true;
         get("prompt-badge").textContent = "Draft";
         for (const id of ["message-count", "task-count", "patch-count", "audit-count", "master-count", "huddle-count", "claim-count", "question-count", "news-count"]) get(id).textContent = "0";
-        setStatus(message ? "Access denied · enter a viewer key" : "Viewer key required", message ? "warning" : "");
-        if (focus) get("viewer-key").focus();
+        setStatus(message ? "Access denied · enter a member key or agent token" : "Access key required", message ? "warning" : "");
+        if (focus) get("access-key").focus();
       }
       get("sign-out").addEventListener("click", () => showAuth("", true));
 
@@ -618,16 +613,11 @@
         const fragment = document.createDocumentFragment();
         const completed = rows.filter((row) => ["done", "accepted"].includes(row.status)).length;
         const taskStatus = (row) => row.dashboard_status || row.status;
-        const columns = canWrite() ? [
+        const columns = [
           ["Proposed / open", (row) => ["proposed", "open"].includes(taskStatus(row))],
           ["Assigned", (row) => taskStatus(row) === "assigned"],
           ["In progress / blocked", (row) => ["in_progress", "blocked"].includes(taskStatus(row))],
           ["Done / closed", (row) => ["done", "accepted", "cancelled"].includes(taskStatus(row))]
-        ] : [
-          ["Proposed / open", (row) => !["in_progress", "blocked", "done", "accepted", "cancelled"].includes(row.status)],
-          ["In progress", (row) => row.status === "in_progress"],
-          ["Blocked", (row) => row.status === "blocked"],
-          ["Done / closed", (row) => ["done", "accepted", "cancelled"].includes(row.status)]
         ];
         for (const [label, matches] of columns) {
           const column = element("section", "board-column");
@@ -952,7 +942,7 @@
             const button = Array.from(list.querySelectorAll("button")).find((node) => node.dataset.focus === "huddle:" + previous);
             if (button) button.focus({ preventScroll: true });
           });
-          controls.append(back, element("span", "meta", canWrite() ? "Participating as " + me : "Read-only discussion"));
+          controls.append(back, element("span", "meta", "Participating as " + me));
           const card = huddleCard(selected, true);
           card.querySelector("details").open = true;
           view.append(controls, card);
@@ -1070,7 +1060,7 @@
             files.title = claims.map((row) => row.path).join("\n");
             main.append(files);
           }
-          // The viewer snapshot has no presence/heartbeat data; do not invent online status.
+          // Legacy snapshots have no presence/heartbeat data; do not invent online status.
           const activity = [...data.messages.filter((row) => row.sender === agent), ...data.news.filter((row) => row.actor === agent), ...data.audit.filter((row) => row.actor === agent), ...data.patches.filter((row) => row.sender === agent), ...data.questions.filter((row) => row.sender === agent), ...data.huddles.flatMap((row) => (row.posts || []).filter((post) => post.author === agent)), ...(data.master_prompt.sections || []).filter((row) => row.author === agent)];
           const times = activity.map((row) => row.created_at).concat(data.questions.filter((row) => row.recipient === agent && row.answered_at).map((row) => row.answered_at)).filter((value) => Number.isFinite(new Date(value).getTime()));
           const latest = times.length ? Math.max(...times.map((value) => new Date(value).getTime())) : null;
@@ -1091,7 +1081,7 @@
           ["Tasks", "Agent-owned work, with dependency and contract / skeleton tracking"],
           ["Master prompt", "Both agents approve before the prompt is locked"],
           ["File holds", "Shared coordination claims, expiring after 30 minutes"],
-          ["Dashboard", canWrite() ? "Authenticated as " + me + "; actions use this agent's permissions" : "Viewer-key access; read-only. Agent tokens enable participation."]
+          ["Dashboard", "Authenticated as " + me + "; actions use this agent's permissions"]
         ]) {
           const row = element("div", "rule");
           row.append(element("dt", "", label), element("dd", "", text));
@@ -1183,14 +1173,20 @@
         const requestController = new AbortController();
         controller = requestController;
         try {
-          const path = accessMode === "agent" ? "/v1/dashboard/state?after=" : "/v1/transcript?after=";
-          const response = await fetch(path + lastEventId, {
+          const response = await fetch("/v1/dashboard/state?after=" + lastEventId, {
             headers: { Authorization: "Bearer " + key },
             cache: "no-store", signal: requestController.signal
           });
           if (session !== currentSession || controller !== requestController) return;
+          if (response.status === 401 && accessMode === "auto") {
+            // Member keys authenticate against the team API, not the legacy agent gate.
+            accessMode = "member";
+            hub.start(key);
+            await hub.poll();
+            return;
+          }
           if (response.status === 401 || response.status === 403) {
-            showAuth(accessMode === "agent" ? "The agent token was rejected. Enter a valid agent token to reconnect." : "The viewer key was rejected. Enter a valid viewer key to reconnect.", true);
+            showAuth("The agent token was rejected. Enter a valid agent token to reconnect.", true);
             return;
           }
           if (!response.ok) throw new Error("Request failed");
@@ -1200,9 +1196,10 @@
           // Defaults keep this dashboard usable with older server snapshots.
           data.master_prompt = data.master_prompt || {};
           for (const name of ["huddles", "claims", "questions", "news"]) if (!Array.isArray(data[name])) data[name] = [];
-          if (accessMode === "agent" && !agents.includes(data.me)) throw new Error("Invalid agent identity");
-          if (me !== (accessMode === "agent" ? data.me : null)) rendered = {};
-          me = accessMode === "agent" ? data.me : null;
+          if (!agents.includes(data.me)) throw new Error("Invalid agent identity");
+          accessMode = "agent";
+          if (me !== data.me) rendered = {};
+          me = data.me;
           data.claims = data.claims.filter((row) => new Date(row.expires_at).getTime() > Date.now());
           snapshot = data;
           for (const [name, id, render] of [["messages", "messages", renderMessages], ["tasks", "tasks", renderTasks], ["patches", "patches", renderPatches], ["audit", "audit", renderAudit], ["master_prompt", "master", renderMaster], ["huddles", "huddles", renderHuddles], ["claims", "claims", renderClaims], ["questions", "questions", renderQuestions], ["news", "news", renderNews]]) {
@@ -1219,24 +1216,22 @@
           const now = new Date();
           get("last-updated").textContent = now.toLocaleTimeString();
           get("last-updated").dateTime = now.toISOString();
-          get("access-description").textContent = canWrite() ? "Two agents. One shared workspace. Participating as " + me + "." : "Two agents. One shared workspace. A read-only view.";
-          get("access-footer").textContent = (canWrite() ? "Agent access · " + me : "Read-only") + " · Full snapshots every 4 seconds";
-          get("asks-hint").textContent = canWrite() ? "Use the controls below to respond as " + me + ". Your agent can also respond from its own session." : "Your agents handle questions, ideas and votes from their own sessions. This dashboard is read-only.";
-          setStatus(canWrite() ? "Live · " + me : "Live · read-only", "live");
+          get("access-description").textContent = "Two agents. One shared workspace. Participating as " + me + ".";
+          get("asks-hint").textContent = "Use the controls below to respond as " + me + ". Your agent can also respond from its own session.";
+          setStatus("Live · " + me, "live");
         } catch (error) {
           if (session === currentSession && !requestController.signal.aborted) setStatus("Connection interrupted · retrying every 4 seconds", "warning");
         } finally {
           if (controller === requestController) controller = null;
         }
       }
-      function startSession(viewerKey, mode = "viewer") {
+      function startSession(accessKey, mode = "auto") {
         stopSession();
-        key = viewerKey;
+        key = accessKey;
         accessMode = mode;
-        if (mode === "member") hub.start(viewerKey);
-        if (mode === "viewer") storage.set("agentmesh-viewer", key);
-        else storage.remove("agentmesh-viewer"); // Agent credentials are memory-only.
-        get("viewer-key").value = "";
+        if (mode === "member") hub.start(accessKey);
+        storage.remove("agentmesh-viewer"); // Discard obsolete credentials; agent tokens stay memory-only.
+        get("access-key").value = "";
         get("auth-error").hidden = true;
         get("auth").hidden = true;
         get("workspace").hidden = false;
@@ -2039,7 +2034,6 @@
           $("#team-title").textContent = "Team status · " + (state.team.name || "Your team");
           document.title = (state.team.name || "Team") + " · AgentMesh";
           $("#access-description").textContent = `${state.team.name} · Participating as ${state.me.name}.`;
-          $("#access-footer").textContent = "Member access · " + state.me.name + " · Live team updates";
           $("#team-invite").hidden = false;
           $("#house-rules-panel").hidden = false;
           const legend = document.querySelectorAll(".legend")[0]; if (legend) legend.hidden = true;
@@ -2202,28 +2196,19 @@
         }
         return { start, stop, poll, takeToken };
       })();
-      get("viewer-form").addEventListener("submit", (event) => {
+      get("access-form").addEventListener("submit", (event) => {
         event.preventDefault();
-        const viewerKey = get("viewer-key").value.trim();
-        if (viewerKey.length < 32) {
-          get("auth-error").textContent = "The viewer key must contain at least 32 characters.";
+        const accessKey = get("access-key").value.trim();
+        if (accessKey.length < 32) {
+          get("auth-error").textContent = "The access key must contain at least 32 characters.";
           get("auth-error").hidden = false;
           return;
         }
-        const mode = get("access-mode").value;
-        if (teamRoute && mode !== "member") {
-          get("auth-error").textContent = "Use member access for this team. Legacy modes are available on the dashboard host.";
-          get("auth-error").hidden = false;
-          return;
-        }
-        startSession(viewerKey, ["member", "agent"].includes(mode) ? mode : "viewer");
+        startSession(accessKey, teamRoute ? "member" : "auto");
       });
       const teamRoute = typeof location !== "undefined" && /^\/t\/([a-z0-9]+)$/.exec(location.pathname);
-      get("access-mode").value = typeof location !== "undefined" && location.pathname !== "/viewer" ? "member" : "viewer";
       const memberKey = hub.takeToken();
-      const storedKey = storage.get("agentmesh-viewer");
       if (memberKey) startSession(memberKey, "member");
-      else if (storedKey && get("access-mode").value === "viewer") startSession(storedKey);
       else showAuth();
     })();
   </script>

@@ -125,6 +125,8 @@ def create_server(config_dir=None, host="127.0.0.1", port=8787, allow_remote_bin
         raise ValueError("non-loopback bind requires --allow-remote-bind")
     config = load_config(config_dir)
     state = State(config_dir, config)
+    # Legacy configs may retain obsolete token roles; only agents authenticate.
+    state.token_hashes = [(agent, digest) for agent, digest in state.token_hashes if agent in AGENTS]
     server_type = AgentMeshHTTPServer
     if ":" in host:
         class IPv6Server(AgentMeshHTTPServer):
@@ -334,10 +336,10 @@ class Handler(BaseHTTPRequestHandler):
             connection.close()
 
     def _legacy_adapter(self, url):
-        """Read-only legacy snapshots for authenticated default-team members."""
+        """Legacy snapshots for authenticated default-team members."""
         path = url.path[len("/api/legacy"):]
         if self.command != "GET":
-            raise HttpError(405, "legacy panels are read-only")
+            raise HttpError(405, "method not allowed")
         if path not in ("/transcript", "/patches") and not PATCH_PATH.fullmatch("/v1" + path):
             raise HttpError(404, "not found")
         hub = self.server.hub
@@ -375,16 +377,21 @@ class Handler(BaseHTTPRequestHandler):
         if state is None or state.stop.is_set():
             raise HttpError(503, "server shutting down")
         with state.condition:
-            data, status = self._route(state, "viewer" if path == "/transcript" else "agent-a",
-                                       "/v1" + path, query)
+            if path == "/transcript":
+                data, status = self._snapshot(state, query)
+            else:
+                data, status = self._route(state, "agent-a", "/v1" + path, query)
         self._json(data, status)
 
     def _handle(self):
         try:
             self.body = self._read_body()
             url = urlsplit(self.path)
-            if self.command in ("GET", "HEAD") and url.path in ("/", "/index.html", "/viewer"):
-                self._dashboard("signin.html" if url.path == "/index.html" else "dashboard.html")
+            if self.command in ("GET", "HEAD") and url.path in ("/index.html", "/viewer"):
+                self._send(b"", 302, "text/plain; charset=utf-8", {"Location": "/"})
+                return
+            if self.command in ("GET", "HEAD") and url.path == "/":
+                self._dashboard()
                 return
             if url.path.startswith("/api/legacy/"):
                 self._legacy_adapter(url)
@@ -407,8 +414,8 @@ class Handler(BaseHTTPRequestHandler):
             header = self.headers.get("Authorization", "")
             token = header[7:].strip() if header.startswith("Bearer ") else ""
             agent = state.identify(token) if token else None
-            if agent == "viewer" and (url.path != "/v1/transcript" or self.command != "GET"):
-                raise HttpError(403, "viewer is read-only")
+            if agent not in AGENTS:
+                agent = None
             if url.path == "/health" and self.command == "GET":
                 self._json({"ok": True, "service": "agentmesh"})
                 return
@@ -465,6 +472,34 @@ class Handler(BaseHTTPRequestHandler):
     do_HEAD = _handle
     do_OPTIONS = _handle
 
+    def _snapshot(self, state, query, agent=None):
+        """Build a member-authorized transcript or an agent-scoped dashboard."""
+        now = now_ms()
+        rows = state.rows
+        scoped = agent is not None
+        raw_after = query.get("after", [None])[0]
+        if raw_after is not None and not re.fullmatch(r"-?\d+", raw_after, re.ASCII):
+            raise HttpError(400, "after must be an integer")
+        after_number = _number(raw_after) if raw_after is not None else 0
+        if not math.isfinite(after_number) or abs(after_number) > 2**53 - 1:
+            raise HttpError(400, "after must be an integer")
+        after = int(after_number)
+        events = rows("SELECT * FROM events WHERE id>?" + (" AND recipient=?" if scoped else "") + " ORDER BY id ASC LIMIT 200", after, *((agent,) if scoped else ()))
+        tasks = [_task_dict(row, state) for row in rows("SELECT * FROM tasks" + (" WHERE created_by=? OR assignee=? OR (status='open' AND id IN (SELECT task_id FROM dashboard_tasks WHERE state='open'))" if scoped else "") + " ORDER BY created_at DESC LIMIT 200", *((agent, agent) if scoped else ()))[::-1]]
+        if scoped:
+            for task in tasks:
+                task["dashboard_status"] = coordination.dashboard_status(state, task)
+        return {
+            "messages": rows("SELECT * FROM messages" + (" WHERE sender=? OR recipient=?" if scoped else "") + " ORDER BY created_at DESC LIMIT 500", *((agent, agent) if scoped else ()))[::-1],
+            "tasks": tasks,
+            "patches": rows("SELECT id,sender,title,task_id,created_at,length(text) AS size FROM patches ORDER BY created_at DESC LIMIT 50")[::-1],
+            "audit": rows("SELECT * FROM audit" + (" WHERE actor=?" if scoped else "") + " ORDER BY id DESC LIMIT 200", *((agent,) if scoped else ()))[::-1],
+            "events": events,
+            "last_event_id": events[-1]["id"] if events else after,
+            **coordination.snapshot(state, now, agent=agent),
+            **({"me": agent} if scoped else {}),
+        }, 200
+
     def _route(self, state, agent, path, query):
         method, now = self.command, now_ms()
 
@@ -473,32 +508,10 @@ class Handler(BaseHTTPRequestHandler):
 
         rows = state.rows
         db = state.db
-        dashboard_state = path == "/v1/dashboard/state" and method == "GET"
-        if agent == "viewer" or dashboard_state:
-            raw_after = param("after")
-            if raw_after is not None and not re.fullmatch(r"-?\d+", raw_after, re.ASCII):
-                raise HttpError(400, "after must be an integer")
-            after_number = _number(raw_after) if raw_after is not None else 0
-            if not math.isfinite(after_number) or abs(after_number) > 2**53 - 1:
-                raise HttpError(400, "after must be an integer")
-            after = int(after_number)
-            events = rows("SELECT * FROM events WHERE id>?" + (" AND recipient=?" if dashboard_state else "") + " ORDER BY id ASC LIMIT 200", after, *((agent,) if dashboard_state else ()))
-            tasks = [_task_dict(row, state) for row in rows("SELECT * FROM tasks" + (" WHERE created_by=? OR assignee=? OR (status='open' AND id IN (SELECT task_id FROM dashboard_tasks WHERE state='open'))" if dashboard_state else "") + " ORDER BY created_at DESC LIMIT 200", *((agent, agent) if dashboard_state else ()))[::-1]]
-            if dashboard_state:
-                for task in tasks:
-                    task["dashboard_status"] = coordination.dashboard_status(state, task)
-            return {
-                "messages": rows("SELECT * FROM messages" + (" WHERE sender=? OR recipient=?" if dashboard_state else "") + " ORDER BY created_at DESC LIMIT 500", *((agent, agent) if dashboard_state else ()))[::-1],
-                "tasks": tasks,
-                "patches": rows("SELECT id,sender,title,task_id,created_at,length(text) AS size FROM patches ORDER BY created_at DESC LIMIT 50")[::-1],
-                "audit": rows("SELECT * FROM audit" + (" WHERE actor=?" if dashboard_state else "") + " ORDER BY id DESC LIMIT 200", *((agent,) if dashboard_state else ()))[::-1],
-                "events": events,
-                "last_event_id": events[-1]["id"] if events else after,
-                **coordination.snapshot(state, now, agent=agent if dashboard_state else None),
-                **({"me": agent} if dashboard_state else {}),
-            }, 200
+        if path == "/v1/dashboard/state" and method == "GET":
+            return self._snapshot(state, query, agent)
         if path == "/v1/transcript":
-            raise HttpError(403, "viewer token required")
+            raise HttpError(403, "member key required")
         coordinated = coordination.route(self, state, agent, path, query, now)
         if coordinated is not None:
             return coordinated

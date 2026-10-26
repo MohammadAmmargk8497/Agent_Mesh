@@ -42,7 +42,7 @@ const stateResponse = (status, state) => ({ status, ok: status >= 200 && status 
 module.exports = async function testSignin(worker, env) {
   // Public front-door pages keep their existing headers and inject only a fresh nonce.
   const nonces = [];
-  for (const route of ['/', '/index.html', '/viewer', '/']) {
+  for (const route of ['/', '/']) {
     const page = await worker.default.fetch(new Request('https://agentmesh.zahid.win' + route), env);
     assert.equal(page.status, 200, route);
     assert.equal(page.headers.get('content-type'), 'text/html; charset=utf-8');
@@ -53,12 +53,21 @@ module.exports = async function testSignin(worker, env) {
     const nonce = /script-src 'nonce-([^']+)'/.exec(csp)[1];
     nonces.push(nonce);
     assert.equal(csp, `default-src 'none'; script-src 'nonce-${nonce}'; style-src 'nonce-${nonce}' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src 'self'; img-src 'self' data:; base-uri 'none'; frame-ancestors 'none'`);
-    assert.equal(html, (route === '/index.html' ? signin : dashboard).replaceAll('__AGENTMESH_NONCE__', nonce));
+    assert.equal(html, dashboard.replaceAll('__AGENTMESH_NONCE__', nonce));
     assert.ok([...html.matchAll(/<(?:script|style)\b[^>]*>/g)].every(([tag]) => tag.includes('nonce="' + nonce + '"')));
     for (const token of [env.AGENT_A_TOKEN, env.AGENT_B_TOKEN, env.VIEWER_TOKEN]) assert.ok(!html.includes(token));
-    assert.ok(html.includes(route === '/index.html' ? 'id="signin-form"' : 'id="viewer-form"'));
+    assert.ok(/<input\b[^>]*type="password"/.test(html));
+    assert.ok(!/read-only|read only|<option[^>]*value="viewer"/i.test(html));
   }
   assert.equal(new Set(nonces).size, nonces.length);
+  for (const route of ['/index.html', '/viewer']) {
+    for (const method of ['GET', 'HEAD']) {
+      const page = await worker.default.fetch(new Request('https://agentmesh.zahid.win' + route, { method }), env);
+      assert.equal(page.status, 302, route);
+      assert.equal(page.headers.get('location'), '/');
+      assert.equal(await page.text(), '');
+    }
+  }
   for (const host of ['agents.zahid.win', 'mesh.example']) {
     for (const route of ['/', '/index.html', '/viewer']) {
       assert.equal((await worker.default.fetch(new Request('https://' + host + route), env)).status, 401);

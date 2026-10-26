@@ -17,9 +17,9 @@ NEW_ROUTES = [
 
 
 @pytest.mark.parametrize("method,path", NEW_ROUTES)
-def test_coordination_routes_keep_authentication_and_viewer_boundary(api, method, path):
+def test_coordination_routes_reject_removed_viewer_credentials(api, method, path):
     assert api.request(method, path, None, data={}).status == 401
-    assert api.request(method, path, "viewer", data={}).status == 403
+    assert api.request(method, path, "viewer", data={}).status == 401
 
 
 def test_old_task_actions_and_identity_keep_exact_response_shapes(api):
@@ -64,14 +64,14 @@ def test_old_message_and_patch_endpoints_remain_unchanged(api):
     }}
 
 
-def test_viewer_transcript_adds_coordination_without_removing_old_keys(api):
+def test_agent_dashboard_adds_coordination_without_removing_old_keys(api):
     api.task()
     api.post("/v1/master/sections", {"section": "Goal", "text": "Shared project"})
     api.post("/v1/claims", {"path": "src/api.py"})
     huddle_id = api.post("/v1/huddles", {"kind": "standup", "topic": "Today"}).json()["id"]
     api.post(f"/v1/huddles/{huddle_id}/posts", {"kind": "idea", "text": "Publish skeleton"}, "b")
     api.post("/v1/questions", {"to": "agent-b", "text": "Ready?"})
-    result = api.get("/v1/transcript", "viewer")
+    result = api.get("/v1/dashboard/state")
     assert result.status == 200
     transcript = result.json()
     assert {"messages", "tasks", "patches", "audit", "events", "last_event_id"} <= set(transcript)

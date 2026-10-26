@@ -197,8 +197,8 @@ async function idle(app) {
   assert.fail('Browser requests did not settle: ' + app.calls.filter(call => !call.done).map(call => call.url));
 }
 async function login(app, token) {
-  app.get('access-mode').value = 'member'; app.get('viewer-key').value = token;
-  await app.get('viewer-form').fire('submit'); await idle(app);
+  app.get('access-key').value = token;
+  await app.get('access-form').fire('submit'); await idle(app);
   assert.equal(app.get('auth').hidden, true, app.get('auth-error').textContent);
 }
 async function poll(app) {
@@ -238,16 +238,17 @@ async function run(request, tokens) {
   const initial = await api('/api/state'); input.team = initial.team.id;
   const empty = browser(input, request); await idle(empty);
   assert.equal(empty.calls.length, 0, 'no authenticated requests before a key is supplied');
-  assert.equal(empty.get('access-mode').value, 'member', 'team pages default to member-key access');
+  assert.equal(empty.get('access-mode'), null, 'one access form has no viewer or mode selector');
+  assert.doesNotMatch(html, /read[- ]only|value=["']viewer["']/i, 'the served page has no read-only mode');
   for (const id of ['tasks', 'huddle-list', 'huddle-view', 'master', 'news', 'members', 'rules', 'house-rules', 'questions', 'claims',
     'messages', 'audit', 'patches', 'coordination', 'theme-toggle', 'sign-out', 'member-heartbeats', 'invite-show']) assert.ok(empty.get(id), 'panel/control ' + id);
-  assert.equal(empty.document.documentElement.getAttribute('data-theme'), 'dark', 'viewer theme preference retained');
+  assert.equal(empty.document.documentElement.getAttribute('data-theme'), 'dark', 'dashboard theme preference retained');
   await empty.get('theme-toggle').click();
   assert.equal(empty.document.documentElement.getAttribute('data-theme'), 'light');
   assert.equal(empty.storage.get('papers-theme'), 'light');
 
   const app = browser(input, request, { hash: '#k=' + encodeURIComponent(tokens.a) }); await idle(app);
-  assert.equal(app.get('auth').hidden, true, 'fragment member key opens the unified viewer');
+  assert.equal(app.get('auth').hidden, true, 'fragment member key opens the unified dashboard');
   assert.equal(app.location.hash, '', 'fragment credential removed from the URL');
   assert.ok(app.historyCalls.length, 'credential fragment removal uses history replacement');
   assert.ok(app.calls.some(call => call.url === '/api/state'));
@@ -278,7 +279,26 @@ async function run(request, tokens) {
   const rootApp = browser(input, request, { pathname: '/', hash: '#k=' + encodeURIComponent(tokens.a) }); await idle(rootApp);
   assert.equal(rootApp.get('auth').hidden, true, 'the agentmesh root discovers the member team without a /t URL');
   assert.ok(rootApp.get('members').textContent.includes('agent-a'));
-  assert.equal(rootApp.get('access-mode').value, 'member');
+  assert.ok(rootApp.calls.some(call => call.url === '/api/state'), 'fragment credentials retain member-key access');
+
+  const agent = browser(input, request, { pathname: '/' }); await login(agent, tokens.a);
+  assert.match(agent.get('connection-status').textContent, /agent-a/, 'typed legacy token selects its agent identity');
+  assert.ok(agent.calls.some(call => call.url === '/v1/dashboard/state?after=0' && call.status === 200));
+  assert.ok(!agent.calls.some(call => call.url.startsWith('/api/')), 'legacy agent session does not mix team credentials');
+  assert.ok(![...agent.storage.values(), ...agent.sessionStorage.values()].includes(tokens.a), 'legacy agent credential stays memory-only');
+  for (const enabled of [false, true]) {
+    const before = agent.calls.length, toggle = agent.get('auto-respond');
+    assert.ok(toggle, 'agent settings retain a writable control'); toggle.checked = enabled; await toggle.fire('change'); await idle(agent);
+    assert.deepEqual(postFrom(agent.calls.slice(before), '/v1/settings'), { auto_respond: enabled });
+  }
+  await agent.get('sign-out').click(); await idle(agent);
+  const rejected = browser(input, request, { pathname: '/' });
+  rejected.get('access-key').value = tokens.viewer; await rejected.get('access-form').fire('submit'); await idle(rejected);
+  assert.equal(rejected.get('auth').hidden, false, 'removed viewer credential cannot authenticate');
+  assert.equal(rejected.get('workspace').hidden, true);
+  assert.equal(rejected.root.querySelectorAll('[data-write]').length, 0, 'rejected viewer token exposes no writes');
+  assert.ok(rejected.calls.every(call => (call.options.method || 'GET') === 'GET'), 'rejected viewer never causes a write');
+  assert.ok(!rejected.calls.some(call => call.url.startsWith('/v1/transcript')), 'removed viewer read path is never requested');
 
   let releaseSnapshot;
   const snapshotGate = new Promise(resolve => { releaseSnapshot = resolve; });
@@ -323,6 +343,17 @@ async function run(request, tokens) {
   const isolatedAdapters = isolated.calls.filter(call => call.url.startsWith('/api/legacy/'));
   assert.equal(isolatedAdapters.length, 1, 'other-team legacy panels use the scoped adapter rather than direct /v1 data');
   assert.ok(isolatedAdapters.every(call => call.status === 403 && new URL(call.url, 'https://example').searchParams.get('team') === created.team_id));
+  const typedMember = browser(input, request, { pathname: '/' }); await login(typedMember, created.token);
+  assert.ok(typedMember.calls.some(call => call.url.startsWith('/v1/dashboard/state') && call.status === 401), 'member key is not accepted as a legacy agent token');
+  assert.ok(typedMember.calls.some(call => call.url === '/api/state' && call.status === 200), 'typed member key opens its own team workspace');
+  assert.ok(typedMember.get('members').textContent.includes('Isolated owner'));
+  assert.ok([...typedMember.sessionStorage.values()].includes(created.token), 'member key is remembered only for its browser session');
+  await set(typedMember, 'hub-claim-path', 'src/typed-member.txt');
+  const memberBefore = typedMember.calls.length;
+  await typedMember.get('hub-claim-form').fire('submit'); await idle(typedMember);
+  assert.deepEqual(postFrom(typedMember.calls.slice(memberBefore), '/api/claims').paths, ['src/typed-member.txt'], 'typed member key writes within the detected team');
+  await typedMember.get('sign-out').click(); await idle(typedMember);
+  assert.ok(![...typedMember.sessionStorage.values()].includes(created.token), 'sign-out clears the typed member key');
   const wrongTeam = browser(input, request, { hash: '#k=' + encodeURIComponent(created.token) }); await idle(wrongTeam);
   assert.equal(wrongTeam.get('auth').hidden, false, 'a key cannot open another team URL');
   assert.ok(!wrongTeam.get('members').textContent.includes('Isolated owner'));

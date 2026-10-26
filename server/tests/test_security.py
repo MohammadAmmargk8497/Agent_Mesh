@@ -19,8 +19,7 @@ def test_signin_package_matches_worker_byte_for_byte():
 
 
 @pytest.mark.parametrize("page,paths", [
-    ("dashboard.html", ("/", "/viewer", "/")),
-    ("signin.html", ("/index.html", "/index.html", "/index.html")),
+    ("dashboard.html", ("/", "/", "/")),
 ])
 def test_public_pages_fresh_nonce_csp_and_no_inline_tokens(api, page, paths):
     from importlib.resources import files
@@ -47,6 +46,17 @@ def test_public_pages_fresh_nonce_csp_and_no_inline_tokens(api, page, paths):
         )
         assert all(token not in html for token in api.tokens.values())
     assert len(set(nonces)) == 3
+
+
+@pytest.mark.parametrize("path", ["/viewer", "/index.html", "/viewer?after=1", "/index.html?team=default"])
+@pytest.mark.parametrize("method", ["GET", "HEAD"])
+def test_obsolete_dashboard_pages_redirect_to_root(api, path, method):
+    response = api.request(method, path, None)
+    assert response.status == 302
+    assert response.headers["location"] == "/"
+    assert response.headers["cache-control"] == "no-store"
+    assert response.headers["x-content-type-options"] == "nosniff"
+    assert response.body == b""
 
 
 def test_ratelimit_121st_unauthenticated_request_and_proxy_ip_isolation(api):

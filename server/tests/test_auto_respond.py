@@ -17,7 +17,7 @@ def test_auto_respond_defaults_on_and_isolated_per_authenticated_member(api):
     assert api.post("/v1/settings", {"auto_respond": True}).json()["auto_respond"] is True
 
 
-@pytest.mark.parametrize("role,status", [(None, 401), ("invalid", 401), ("viewer", 403)])
+@pytest.mark.parametrize("role,status", [(None, 401), ("invalid", 401), ("viewer", 401)])
 def test_auto_respond_settings_require_member_authentication(api, role, status):
     assert api.get("/v1/settings", role).status == status
     assert api.post("/v1/settings", {"auto_respond": False}, role).status == status

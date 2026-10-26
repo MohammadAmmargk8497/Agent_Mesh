@@ -110,40 +110,48 @@ def test_patches_metadata_full_text_and_audit(api):
     assert api.get(f"/v1/patches/{patch_id}", "b").json()["patch"]["text"] == "--- a\n+++ b\n"
     assert api.get(f"/v1/patches/{uuid.uuid4()}").status == 404
     sent = api.post("/v1/messages", {"to": "agent-b", "text": "audited"}).json()["id"]
-    audit = api.get("/v1/transcript", "viewer").json()["audit"]
+    audit = api.get("/v1/dashboard/state").json()["audit"]
     assert [{"actor": row["actor"], "action": row["action"], "ref": row["ref"]} for row in audit] == [
         {"actor": "agent-a", "action": "message.send", "ref": sent},
     ]
 
 
-def test_viewer_transcript_is_read_only_and_requires_viewer_token(api):
+@pytest.mark.parametrize("method,path", [
+    ("GET", "/v1/whoami"), ("GET", "/v1/inbox"), ("GET", "/v1/events"),
+    ("GET", "/v1/patches"), ("GET", "/v1/dashboard/state"),
+    ("GET", "/v1/transcript"), ("GET", "/v1/transcript/"),
+    ("POST", "/v1/transcript"), ("POST", "/v1/messages"),
+    ("POST", "/v1/tasks"), ("POST", "/v1/patches"),
+])
+def test_removed_viewer_credentials_never_authenticate(api, method, path):
+    assert api.server.state.identify(api.tokens["viewer"]) is None
+    response = api.request(method, path, "viewer", data={},
+                           headers={"X-Agentmesh-Agent": "agent-a"})
+    assert response.status == 401
+    assert response.json() == {"error": "unauthorized"}
+
+
+def test_legacy_transcript_is_not_an_agent_endpoint(api):
     api.task()
     assert api.get("/v1/transcript", None).status == 401
-    assert api.get("/v1/transcript").status == 403
-    transcript = api.get("/v1/transcript", "viewer")
-    assert transcript.status == 200
-    assert {"messages", "tasks", "patches", "audit", "events", "last_event_id"} <= set(transcript.json())
-    assert transcript.json()["tasks"][0]["acceptance_criteria"] == ["covered by tests"]
-    for method, path in (("GET", "/health"), ("GET", "/v1/whoami"), ("GET", "/v1/inbox"),
-                         ("GET", "/v1/events"), ("GET", "/v1/patches"), ("POST", "/v1/messages"),
-                         ("POST", "/v1/transcript"), ("GET", "/v1/transcript/")):
-        assert api.request(method, path, "viewer", data={}).status == 403
+    for agent in ("a", "b"):
+        assert api.get("/v1/transcript", agent).status == 403
 
 
 @pytest.mark.parametrize("after", ["abc", "1.5", "", "1e3", "9007199254740992"])
-def test_viewer_after_validation(api, after):
-    assert api.get("/v1/transcript?after=" + after, "viewer").status == 400
+def test_dashboard_after_validation(api, after):
+    assert api.get("/v1/dashboard/state?after=" + after).status == 400
 
 
-def test_viewer_transcript_event_cursor(api):
-    api.post("/v1/messages", {"to": "agent-b", "text": "first"})
-    first = api.get("/v1/transcript", "viewer").json()
+def test_dashboard_event_cursor(api):
+    api.post("/v1/messages", {"to": "agent-a", "text": "first"}, "b")
+    first = api.get("/v1/dashboard/state").json()
     assert first["events"][-1]["type"] == "message"
     cursor = first["last_event_id"]
-    empty = api.get(f"/v1/transcript?after={cursor}", "viewer").json()
+    empty = api.get(f"/v1/dashboard/state?after={cursor}").json()
     assert empty["events"] == [] and empty["last_event_id"] == cursor
     api.post("/v1/messages", {"to": "agent-a", "text": "second"}, "b")
-    later = api.get(f"/v1/transcript?after={cursor}", "viewer").json()
+    later = api.get(f"/v1/dashboard/state?after={cursor}").json()
     assert len(later["events"]) == 1
     assert later["events"][0]["actor"] == "agent-b"
 

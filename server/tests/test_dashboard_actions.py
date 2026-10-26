@@ -41,28 +41,29 @@ def post_idea(api, huddle_id):
 def test_every_new_write_route_requires_agent_bearer(api, path):
     assert api.post(path, {}, None).status == 401
     assert api.post(path, {}, "invalid-token").status == 401
-    assert api.post(path, {}, "viewer").status == 403
+    assert api.post(path, {}, "viewer").status == 401
 
 
 def test_dashboard_state_auth_shape_and_settings(api):
     assert api.get("/v1/dashboard/state", None).status == 401
-    assert api.get("/v1/dashboard/state", "viewer").status == 403
+    assert api.get("/v1/dashboard/state", "viewer").status == 401
     assert api.get("/v1/transcript").status == 403
     task_id = api.task()
     assert api.post("/v1/settings", {"auto_respond": False}, "b").status == 200
     state = dashboard(api, "b")
-    transcript = api.get("/v1/transcript", "viewer").json()
+    assert api.get("/v1/transcript", "viewer").status == 401
     assert state["me"] == "agent-b"
-    assert set(state) == set(transcript) | {"me"}
+    assert set(state) == {
+        "me", "messages", "tasks", "patches", "audit", "events", "last_event_id",
+        "master_prompt", "huddles", "claims", "questions", "news", "feed_details", "member_settings",
+    }
     assert state["member_settings"] == [
         {"agent": "agent-a", "auto_respond": True},
         {"agent": "agent-b", "auto_respond": False},
     ]
-    assert state["member_settings"] == transcript["member_settings"]
     projected = task(api, task_id)
     assert projected["status"] == "open"
     assert projected["dashboard_status"] == "proposed"
-    assert "dashboard_status" not in transcript["tasks"][0]
     assert "dashboard_status" not in api.get(f"/v1/tasks/{task_id}").json()["task"]
     assert api.get("/v1/dashboard/state?after=no").status == 400
     assert api.get("/v1/dashboard/state?after=9007199254740992").status == 400
@@ -89,9 +90,8 @@ def test_dashboard_agent_scope_cannot_read_or_take_private_records(api):
     assert any(item["ref"] == private_task for item in api.get("/v1/news?peek=true").json()["news"])
     for name in TASK_ACTIONS:
         assert action(api, private_task, name, "a").status == 404
-    transcript = api.get("/v1/transcript", "viewer").json()
-    assert private_task in {item["id"] for item in transcript["tasks"]}
-    assert private_message in {item["id"] for item in transcript["messages"]}
+    assert api.get("/v1/transcript", "viewer").status == 401
+    assert private_question in {item["id"] for item in own_state["questions"]}
 
 
 @pytest.mark.parametrize("name", TASK_ACTIONS)
@@ -228,7 +228,7 @@ def test_vote_feed_details_keep_history_without_changing_news_response(api):
         {"decision": "approve", "note": "Looks good", "revision": 1},
         {"decision": "reject", "note": "Needs more detail", "revision": 2},
     ]
-    assert api.get("/v1/transcript", "viewer").json()["feed_details"] == state["feed_details"]
+    assert dashboard(api, "b")["feed_details"] == state["feed_details"]
     for item in api.get("/v1/news?peek=true").json()["news"]:
         assert set(item) == {"id", "actor", "kind", "ref", "summary", "created_at"}
 
@@ -262,9 +262,9 @@ def test_dashboard_huddle_starter_counts_except_standup_without_changing_legacy(
     legacy = api.get(f"/v1/huddles/{huddle_id}").json()["huddle"]
     assert legacy["waiting_on"] == ["agent-a", "agent-b"]
     assert "votes" not in legacy
-    transcript = api.get("/v1/transcript", "viewer").json()["huddles"][0]
-    assert transcript["waiting_on"] == legacy["waiting_on"]
-    assert transcript["dashboard_waiting_on"] == waiting
+    other_dashboard = dashboard(api, "b")["huddles"][0]
+    assert other_dashboard["waiting_on"] == waiting
+    assert other_dashboard["dashboard_waiting_on"] == waiting
 
 
 @pytest.mark.parametrize("endpoint", ["comments", "votes"])
@@ -320,10 +320,10 @@ def test_votes_upsert_without_posts_and_legacy_projection_changes(api):
     assert "votes" not in legacy
     assert legacy["waiting_on"] == ["agent-b"]
     assert len(legacy["posts"]) == 1
-    transcript_huddle = api.get("/v1/transcript", "viewer").json()["huddles"][0]
-    assert transcript_huddle["votes"] == current["votes"]
-    assert transcript_huddle["waiting_on"] == legacy["waiting_on"]
-    assert transcript_huddle["dashboard_waiting_on"] == []
+    other_dashboard = dashboard(api, "b")["huddles"][0]
+    assert other_dashboard["votes"] == current["votes"]
+    assert other_dashboard["waiting_on"] == []
+    assert other_dashboard["dashboard_waiting_on"] == []
     vote_news = [item for item in dashboard(api)["news"] if item["kind"] == "huddle_voted"]
     assert "Backed idea" in vote_news[0]["summary"]
     assert "Good idea" in vote_news[0]["summary"]
