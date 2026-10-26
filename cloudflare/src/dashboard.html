@@ -85,7 +85,7 @@
     .meta{color:var(--dim);overflow-wrap:anywhere}
     .message .meta{font-size:10px}
     .items{overflow:auto;padding:0 18px;overscroll-behavior:contain}
-    .items,.messages,.col-feed,.board-column{scrollbar-width:thin;scrollbar-color:var(--line) transparent}
+    .items,.messages,.col-feed,.board-column,#master .sections{scrollbar-width:thin;scrollbar-color:var(--line) transparent}
     .col-team .items{max-height:380px}
     .col-feed{position:sticky;top:18px;max-height:calc(100dvh - 36px);overflow:auto;overscroll-behavior:contain;grid-auto-rows:max-content}
     .panel-feed .items{max-height:calc(100dvh - 240px);min-height:180px}
@@ -153,6 +153,7 @@
     .vote{border:1px solid var(--line);border-radius:7px;padding:6px 9px;font-size:11px;max-width:100%;overflow-wrap:anywhere}
     .vote p{margin:4px 0;white-space:pre-wrap}
     .sections{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 22px;padding:0 18px}
+    #master .sections{max-height:min(560px,65dvh);overflow-y:auto;overscroll-behavior:contain}
     .prompt-section{min-width:0;border-bottom:1px solid var(--line-soft);padding:16px 0}
     .prompt-history{grid-column:1/-1;padding:12px 0}
     .feed-entry{border-bottom:1px solid var(--line-soft);padding:12px 0;overflow-wrap:anywhere}
