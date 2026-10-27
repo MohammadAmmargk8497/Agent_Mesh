@@ -41,9 +41,15 @@ export function ask(hub, member, { to, question }) {
   if (!q) throw badRequest('missing_question', 'What do you want to ask?');
   const target = hub.findMember(member.team_id, to);
   if (target.id === member.id) throw badRequest('self_ask', 'That is you. Ask a teammate.');
+  // Never reuse an existing id: a restored team counter can lag behind asks that were merged back.
   const { next_ask } = hub.get('SELECT next_ask FROM teams WHERE id = ?', member.team_id);
-  const id = `Q${next_ask}`;
-  hub.run('UPDATE teams SET next_ask = next_ask + 1 WHERE id = ?', member.team_id);
+  const highest = hub.get(
+    "SELECT COALESCE(MAX(CAST(SUBSTR(id, 2) AS INTEGER)), 0) AS n FROM asks WHERE team_id = ? AND id GLOB 'Q[0-9]*'",
+    member.team_id,
+  ).n;
+  const number = Math.max(Number(next_ask), Number(highest) + 1);
+  const id = `Q${number}`;
+  hub.run('UPDATE teams SET next_ask = ? WHERE id = ?', number + 1, member.team_id);
   hub.run(
     'INSERT INTO asks (team_id, id, from_id, to_id, question, created_at) VALUES (?, ?, ?, ?, ?, ?)',
     member.team_id,
