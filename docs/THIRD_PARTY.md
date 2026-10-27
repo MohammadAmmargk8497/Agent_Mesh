@@ -95,7 +95,8 @@ The generated dashboard pages in `server/src/agentmesh_server/` and `cloudflare/
 - `cloudflare/src/openhuddle/agentmesh-seed.js` — original AgentMesh seed adapter shared with the other ports.
 - `cloudflare/src/openhuddle/do-sqlite.ts` — original storage adapter for Durable Object SQLite.
 - `cloudflare/src/openhuddle/export.ts` — original bounded, read-only SQLite export helper.
-- `cloudflare/src/openhuddle/hub-room.ts` — adapted: Worker Request/Response routing, SSE, Durable Object lifecycle and read-only owner export RPC.
+- `cloudflare/src/openhuddle/admin-recovery.ts` — original owner-only bookmark recovery and insert-only SQLite import helper.
+- `cloudflare/src/openhuddle/hub-room.ts` — adapted: Worker Request/Response routing, SSE, Durable Object lifecycle, read-only owner export and owner recovery/import RPCs.
 - `cloudflare/src/openhuddle/package.json` — vendored package manifest.
 - `cloudflare/src/openhuddle/src/hub/asks.js` — adapted: AgentMesh permanent history retention (no automatic age/count/capacity pruning).
 - `cloudflare/src/openhuddle/src/hub/claims.js` — verbatim hub feature module.

@@ -54,6 +54,7 @@ const post = (route, body, token, status = 200) => call('POST', route, body, tok
 async function drain(reader) { let text = ''; while (true) { const r = await reader.read(); if (r.done) return text; text += new TextDecoder().decode(r.value); } }
 (async () => {
   await require('./export.cjs')();
+  await require('./recovery.cjs')();
   await require('./retention.cjs')();
   await require('./history.cjs')();
   await testSignin(worker, env);

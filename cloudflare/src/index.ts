@@ -6,6 +6,7 @@ export { HubRoom } from "./openhuddle/hub-room";
 import type { HubRoom } from "./openhuddle/hub-room";
 import { Coordination, HttpError } from "./coordination";
 import { EXPORT_PAGE_LIMIT, exportTables, exportPage, validExportCursor } from "./openhuddle/export";
+import { AdminRecovery, IMPORT_BODY_BYTES } from "./openhuddle/admin-recovery";
 
 interface Env {
   ROOM: DurableObjectNamespace<Room>;
@@ -43,6 +44,39 @@ async function readJson(request: Request): Promise<any> {
   try { b = JSON.parse(new TextDecoder().decode(buf)); } catch { throw new HttpError(400, "invalid JSON"); }
   if (!b || typeof b !== "object" || Array.isArray(b)) throw new HttpError(400, "body must be a JSON object");
   return b;
+}
+async function readImport(request: Request): Promise<unknown> {
+  if (Number(request.headers.get("content-length") ?? "0") > IMPORT_BODY_BYTES) {
+    await request.body?.cancel();
+    throw new HttpError(413, "request body too large");
+  }
+  const reader = request.body?.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  if (reader) {
+    try {
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        size += value.byteLength;
+        if (size > IMPORT_BODY_BYTES) {
+          await reader.cancel();
+          throw new HttpError(413, "request body too large");
+        }
+        chunks.push(value);
+      }
+    } finally { reader.releaseLock(); }
+  }
+  const bytes = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
+  let body: unknown;
+  try { body = JSON.parse(new TextDecoder().decode(bytes)); }
+  catch { throw new HttpError(400, "invalid JSON"); }
+  if (!body || typeof body !== "object" || Array.isArray(body) ||
+      Object.keys(body).length !== 1 || !Object.hasOwn(body, "rows"))
+    throw new HttpError(400, "body must contain only rows");
+  return (body as { rows: unknown }).rows;
 }
 function validString(v: unknown, max = 4000): v is string {
   return typeof v === "string" && v.trim().length > 0 && v.length <= max;
@@ -82,8 +116,9 @@ async function adminExport(request: Request, env: Env): Promise<Response> {
     if (viewer && crypto.subtle.timingSafeEqual(hash, await sha256(viewer))) return error("unauthorized", 401);
   }
   const url = new URL(request.url);
-  if (request.method !== "GET") return error("method not allowed", 405);
-  if (url.pathname !== "/admin/export/tables" && url.pathname !== "/admin/export/page") return error("not found", 404);
+  const recovery = url.pathname === "/admin/restore" || url.pathname === "/admin/import";
+  if (request.method !== (recovery ? "POST" : "GET")) return error("method not allowed", 405);
+  if (!recovery && url.pathname !== "/admin/export/tables" && url.pathname !== "/admin/export/page") return error("not found", 404);
   try {
     const hub = env.HUB.get(env.HUB.idFromName("openhuddle-hub"));
     const hashHex = Array.from(new Uint8Array(hash), byte => byte.toString(16).padStart(2, "0")).join("");
@@ -91,6 +126,31 @@ async function adminExport(request: Request, env: Env): Promise<Response> {
     // Do not call hub.auth()/fetch(): those seed/reconcile or update presence.
     if (await hub.exportTokenIsMember(hashHex)) return error("unauthorized", 401);
     const room = env.ROOM.get(env.ROOM.idFromName("default-room"));
+    if (recovery) {
+      const store = url.searchParams.get("store");
+      if (store !== "room" && store !== "hub") return error("store must be room or hub");
+      const target = store === "room" ? room : hub;
+      if (url.pathname === "/admin/import") {
+        const table = url.searchParams.get("table") ?? "";
+        if (!table) return error("table is required");
+        const imported = await target.importRows(table, await readImport(request));
+        if ("error" in imported) return error(imported.error, imported.status);
+        return json({ store, table, ...imported });
+      }
+      const rawTime = url.searchParams.get("time") ?? "";
+      const dryRun = url.searchParams.get("dry_run");
+      if (!/^\d+$/.test(rawTime) || !Number.isSafeInteger(Number(rawTime)) || Number(rawTime) > Date.now())
+        return error("time must be a past epoch millisecond integer");
+      if (dryRun !== "0" && dryRun !== "1") return error("dry_run must be 1 or 0");
+      const restored = await target.prepareRestore(Number(rawTime), dryRun === "1");
+      if (dryRun === "0") {
+        // Scheduling already succeeded. ctx.abort() intentionally disconnects
+        // this second RPC; never hide errors from lookup or restore scheduling.
+        // Until the restart, exports/imports reject to prevent readiness races.
+        try { await target.abortRestore(); } catch { /* expected reset disconnect */ }
+      }
+      return json({ store, ...restored });
+    }
     if (url.pathname === "/admin/export/tables") {
       const [roomTables, hubTables] = await Promise.all([room.exportTables(), hub.exportTables()]);
       return json({ tables: [
@@ -111,7 +171,8 @@ async function adminExport(request: Request, env: Env): Promise<Response> {
     if ("error" in page) return error(page.error, page.status);
     return json({ store, table, ...page });
   } catch (err) {
-    return error("export failed", 500);
+    if (err instanceof HttpError) return error(err.message, err.status);
+    return error(recovery ? "recovery failed" : "export failed", 500);
   }
 }
 
@@ -160,7 +221,8 @@ async function legacyAdapter(request: Request, env: Env, ip: string): Promise<Re
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
-    if (url.pathname === "/admin/export" || url.pathname.startsWith("/admin/export/")) return adminExport(request, env);
+    if (url.pathname === "/admin/export" || url.pathname.startsWith("/admin/export/") ||
+        url.pathname === "/admin/restore" || url.pathname === "/admin/import") return adminExport(request, env);
     // Hub member tokens live in the hub DB, not the legacy environment identify gate.
     const hubRoute = url.pathname.startsWith("/api/") || url.pathname.startsWith("/t/") || url.pathname.startsWith("/join/") || url.pathname === "/robots.txt";
     if (hubRoute) {
@@ -229,12 +291,14 @@ export default {
 };
 
 export class Room extends DurableObject<Env> {
+  private ownerRecovery: AdminRecovery;
   private waiters = new Set<() => void>();
   private coordination!: Coordination;
   private deferredPushes: Array<() => void> | null = null;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
+    this.ownerRecovery = new AdminRecovery(ctx);
   }
 
   // Export RPCs must not create/migrate data or schedule alarms on cold starts.
@@ -277,8 +341,12 @@ export class Room extends DurableObject<Env> {
 
   private sql(query: string, ...args: unknown[]) { return this.ctx.storage.sql.exec(query, ...args); }
 
-  exportTables() { return exportTables(this.ctx.storage.sql); }
+  prepareRestore(time: number, dryRun: boolean) { return this.ownerRecovery.prepareRestore(time, dryRun); }
+  abortRestore() { this.ownerRecovery.abortRestore(); }
+  importRows(table: string, rows: unknown) { return this.ownerRecovery.importRows(table, rows); }
+  exportTables() { this.ownerRecovery.assertReady(); return exportTables(this.ctx.storage.sql); }
   exportPage(table: string, after: string | null, limit: number) {
+    this.ownerRecovery.assertReady();
     return exportPage(this.ctx.storage.sql, table, after, limit);
   }
 
@@ -324,13 +392,14 @@ export class Room extends DurableObject<Env> {
   }
 
   async fetch(request: Request): Promise<Response> {
-    this.initialize();
     const url = new URL(request.url);
     const path = url.pathname.replace(/\/+$/, "") || "/";
     const method = request.method.toUpperCase();
     const agent = request.headers.get("x-agentmesh-agent") as Agent | "legacy-adapter";
 
     try {
+      this.ownerRecovery.assertReady();
+      this.initialize();
       // Only the team-authenticated adapter can request a full legacy snapshot.
       const legacySnapshot = agent === "legacy-adapter" && path === "/internal/transcript" && method === "GET";
       const dashboardState = path === "/v1/dashboard/state" && method === "GET";
@@ -576,6 +645,7 @@ export class Room extends DurableObject<Env> {
 
   // Only live file claims expire; conversation and coordination history is permanent.
   async alarm() {
+    this.ownerRecovery.assertReady();
     this.initialize();
     const now = Date.now();
     this.sql("DELETE FROM file_claims WHERE expires_at<=?", now);
