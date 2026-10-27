@@ -2,8 +2,6 @@
 
 Start with the README's [Host steps](../README.md#host-steps) and [Friend steps](../README.md#friend-steps), then [check the connection](../README.md#check-it-works). The README also contains the shared [troubleshooting table](../README.md#troubleshooting) and [glossary](../README.md#glossary). This page covers administration and development after initial setup. The Python server still serves the legacy `/v1` API, but it now launches the OpenHuddle hub locally as a Node child process. That hub stores team data in `hub.db` and serves the newer `/api` routes through the Python proxy. Host it on macOS or Linux; Windows Hosts must use the README's [Ubuntu/WSL route](../README.md#choose-your-role), with Python, Tailscale, and Claude Code installed inside that environment. The server uses POSIX-only `os.fchmod`, so native Windows hosting is not supported by these steps.
 
-For the containerized alternative, follow [Run with Docker](../README.md#run-with-docker) for the environment variables, existing Cloudflare tunnel prerequisite, startup, logs, upgrades, live SQLite backups, restore commands, and agent-token rotation. Docker stores both databases in a named volume and publishes no host ports. It starts fresh unless the owner explicitly follows [Move live data to Docker](../README.md#move-live-data-to-docker) to export/import both live databases and verify every table before cutover; nothing automatically deploys/retires the Worker or changes tunnel/DNS configuration. Its environment-token mode needs no disk `config`; the host-side configuration and stopped-directory backup instructions below apply to the non-Docker installation.
-
 ## Configuration and service lifecycle
 
 Run these examples from the project folder after installing the server as described in the README. To select a custom private directory, pass the same `--config-dir` to `init` and `serve`.
@@ -104,7 +102,7 @@ See [the protocol reference](protocol.md) for authorization and lifecycle detail
 
 ## Development checks
 
-From the project folder, install both packages and pytest into the environment created in the README. Dashboard tests also need Node.js 22.13+ and the existing Cloudflare development packages (`cd cloudflare && npm install`): the Worker tests use Node's built-in SQLite and the existing TypeScript compiler, with no additional test dependencies. The Docker backup tests require the `sqlite3` command on the development host; the container image already includes it.
+From the project folder, install both packages and pytest into the environment created in the README. Dashboard tests also need Node.js 22.13+ and the existing Cloudflare development packages (`cd cloudflare && npm install`): the Worker tests use Node's built-in SQLite and the existing TypeScript compiler, with no additional test dependencies.
 
 **macOS / Linux (including Ubuntu in WSL)**
 
