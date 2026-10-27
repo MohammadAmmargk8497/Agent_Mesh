@@ -26,14 +26,12 @@ function load(name, imports) {
 }
 
 const coordination = load('coordination', {});
-const sqliteExport = load('openhuddle/sqlite-export', {});
 const worker = load('index', {
   'cloudflare:workers': { DurableObject: class {
     constructor(ctx, env) { this.ctx = ctx; this.env = env; }
   } },
   './dashboard.html': { default: '' }, './signin.html': { default: '' }, './hub_dashboard.html': { default: '' },
   './hub_join.html': { default: '' }, './openhuddle/hub-room': { HubRoom: class {} }, './coordination': coordination,
-  './openhuddle/sqlite-export': sqliteExport,
 });
 const db = new DatabaseSync(':memory:');
 const sql = { exec(query, ...args) {
