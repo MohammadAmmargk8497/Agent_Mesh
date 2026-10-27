@@ -1,4 +1,4 @@
-// Provenance: OpenHuddle 59105e5 src/hub/server.js, MIT; adapted: Worker Request/Response routing, SSE and Durable Object lifecycle
+// Provenance: OpenHuddle 59105e5 src/hub/server.js, MIT; adapted: Worker Request/Response routing, SSE, Durable Object lifecycle and read-only owner export RPC
 import { DurableObject } from "cloudflare:workers";
 import { DoSqlite } from "./do-sqlite";
 import { openDb } from "./src/hub/db-do.js";
@@ -7,6 +7,7 @@ import { HubError } from "./src/hub/errors.js";
 import { sha256 } from "./src/shared/ids.js";
 import { LIMITS, ASK_WAIT_MAX_S } from "./src/shared/protocol.js";
 import { seedHub } from "./agentmesh-seed.js";
+import { exportTables, exportPage } from "./export";
 
 interface HubEnv { AGENT_A_TOKEN: string; AGENT_B_TOKEN: string; }
 const PING_MS = 25_000;
@@ -89,13 +90,29 @@ export class HubRoom extends DurableObject<HubEnv> {
 
   constructor(ctx: DurableObjectState, env: HubEnv) {
     super(ctx, env);
+  }
+
+  private initialize() {
+    if (this.hub) return;
+    const ctx = this.ctx;
     this.hub = new Hub(openDb(new DoSqlite(ctx.storage)));
     ctx.blockConcurrencyWhile(async () => {
       if ((await ctx.storage.getAlarm()) === null) await ctx.storage.setAlarm(Date.now() + SWEEP_MS);
     });
   }
 
+  exportTokenIsMember(hash: string): boolean {
+    if (!this.ctx.storage.sql.exec("SELECT name FROM sqlite_master WHERE type='table' AND name='members'").toArray().length) return false;
+    return this.ctx.storage.sql.exec("SELECT 1 FROM members WHERE token_hash=? LIMIT 1", hash).toArray().length > 0;
+  }
+
+  exportTables() { return exportTables(this.ctx.storage.sql); }
+  exportPage(table: string, after: string | null, limit: number) {
+    return exportPage(this.ctx.storage.sql, table, after, limit);
+  }
+
   async alarm() {
+    this.initialize();
     this.openLimiter.sweep();
     this.memberLimiter.sweep();
     this.authLimiter.sweep();
@@ -168,6 +185,7 @@ export class HubRoom extends DurableObject<HubEnv> {
 
   async fetch(request: Request): Promise<Response> {
     try {
+      this.initialize();
       const url = new URL(request.url);
       this.hub.publicUrl = url.origin;
       if (!this.seeded) {

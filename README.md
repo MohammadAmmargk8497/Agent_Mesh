@@ -401,6 +401,7 @@ documents permissions, validation limits and retention for all coordination data
 - [Self-hosting operations](docs/selfhosting.md): backups, team migration, limits, notifications, and development checks.
 - [Client configuration examples](examples/selfhost.md): invite-link setup, local-only connections, and direct Tailscale addresses.
 - [Optional Cloudflare deployment](docs/cloudflare.md): a different hosting option for experienced administrators.
+- [Daily Worker backups to your PC](docs/backups.md): paged owner exports, verified permanent snapshots, and a systemd user timer.
 - [Protocol reference](docs/protocol.md): the rules and request formats for integrations.
 - [Collaboration guidance](examples/CLAUDE.md): instructions you can give Claude for task handoffs and reviews.
 - [Tailscale Serve reference](https://tailscale.com/docs/reference/tailscale-cli/serve) and [Claude Code MCP setup](https://code.claude.com/docs/en/mcp-quickstart).

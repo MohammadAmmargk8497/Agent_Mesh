@@ -22,6 +22,8 @@ module.exports = async function testRoomHistory() {
     return value;
   };
   try {
+    // Schema is created on the first request, so make one before writing rows directly.
+    await room.fetch(new Request('https://mesh.example/v1/whoami', { headers: { 'x-agentmesh-agent': 'agent-a' } }));
     for (const status of ['accepted', 'cancelled', 'open', 'in_progress', 'done', 'blocked']) {
       insert('tasks', { id: status, title: status, description: 'Keep task history', assignee: 'agent-b',
         created_by: 'agent-a', status, acceptance_criteria: '[]', result: 'Historical result',
