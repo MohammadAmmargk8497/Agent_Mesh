@@ -24,6 +24,12 @@ curl --fail https://agents.example.com/health
 
 Store any other generated secrets in a password manager. Do not commit or publish them. Share each member's invite link through an end-to-end encrypted channel. `workers.dev` is disabled in the supplied configuration; use the custom domain route.
 
+## Owner-only live-data export
+
+Normal agent/member operations need no new secret. To migrate all live data to Docker, the owner must separately provision `ADMIN_EXPORT_TOKEN` (an independent secret of at least 32 characters) and deploy this version when ready. Only `GET /admin/export` uses it; existing agent/member/viewer keys cannot authorize exports. The separate `ADMIN_EXPORT_LIMITER` binding limits per-IP and shared owner keys using Cloudflare's approximate, location-local counters; missing configuration fails closed. The route reads both singleton databases directly rather than using truncated dashboard/list APIs; it does not seed/authenticate members or refresh presence. Export data contains private credential and invite records: keep it encrypted/private and never commit it.
+
+Follow the README's [Move live data to Docker](../README.md#move-live-data-to-docker) runbook for the one-line owner curl command, a final live-write freeze, offline import into both Docker SQLite files, and per-table verification. Implementation and local tests do not deploy the Worker, access the live API, or change tunnel/DNS configuration. Owner deployment and approved cutover remain separate actions.
+
 ## Connect the clients
 
 Existing clients keep their current `config.env` and MCP registration. New members follow README's [Friend steps](../README.md#friend-steps): run `agentmesh-setup '<invite-link>' --as friend` in a private terminal, then run its printed registration command. The invite argument is not hidden and may enter shell history. `agentmesh create --hub https://YOUR-WORKER` creates a new team; `agentmesh invite`, `join`, `remove`, `leave`, `delete-team`, `status`, `dash` and `doctor` expose the copied lifecycle. Invites are reusable for seven days, not consumed. Keep `agent-a`/`agent-b` names for the existing seeded identities.
