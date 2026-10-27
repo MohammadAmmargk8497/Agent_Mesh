@@ -335,6 +335,16 @@
         set(key, value) { try { localStorage.setItem(key, value); } catch {} },
         remove(key) { try { localStorage.removeItem(key); } catch {} }
       };
+      const sessionStore = {
+        get() {
+          try {
+            const saved = JSON.parse(sessionStorage.getItem("agentmesh:session"));
+            return typeof saved?.key === "string" && saved.key && ["member", "agent", "auto"].includes(saved.mode) ? saved : null;
+          } catch { return null; }
+        },
+        set(key, mode) { try { sessionStorage.setItem("agentmesh:session", JSON.stringify({ key, mode })); } catch {} },
+        clear() { try { sessionStorage.removeItem("agentmesh:session"); } catch {} }
+      };
       const element = (tag, className, value) => {
         const node = document.createElement(tag);
         if (className) node.className = className;
@@ -555,6 +565,7 @@
       }
       function showAuth(message = "", focus = false) {
         stopSession();
+        sessionStore.clear();
         storage.remove("agentmesh-viewer");
         storage.remove("agentmesh-access-mode");
         get("member-heartbeats").replaceChildren();
@@ -1231,8 +1242,9 @@
         stopSession();
         key = accessKey;
         accessMode = mode;
+        sessionStore.set(accessKey, mode);
         if (mode === "member") hub.start(accessKey);
-        storage.remove("agentmesh-viewer"); // Discard obsolete credentials; agent tokens stay memory-only.
+        storage.remove("agentmesh-viewer"); // Discard obsolete localStorage credentials.
         get("access-key").value = "";
         get("auth-error").hidden = true;
         get("auth").hidden = true;
@@ -1256,15 +1268,10 @@
         const aliases = { "#board": "tasks", "#board-count": "task-count", "#huddles-count": "huddle-count", "#rules": "house-rules" };
         const $ = selector => get(aliases[selector] || selector.slice(1));
         const toast = (text, error = false) => actionStatus(text, error);
-        const sessionKey = {
-          get() { try { return sessionStorage.getItem(storeKey) || ""; } catch { return ""; } },
-          set(value) { try { sessionStorage.setItem(storeKey, value); } catch {} },
-          clear() { try { sessionStorage.removeItem(storeKey); } catch {} }
-        };
         function takeToken() {
           if (typeof location === "undefined") return "";
           const match = /(?:^#|&)k=([^&]+)/.exec(location.hash);
-          if (!match) return sessionKey.get();
+          if (!match) return "";
           let value = match[1];
           try { value = decodeURIComponent(value); } catch {}
           history.replaceState(null, "", location.pathname + location.search);
@@ -2186,12 +2193,12 @@
           if (retryResolve) retryResolve(); retryResolve = null;
           refreshRevision++;
           feedEvents.clear(); questionsById.clear(); editing.clear(); openTalks.clear(); talkDetails.clear(); drafts.clear();
-          sessionKey.clear();
+          try { sessionStorage.removeItem(storeKey); } catch {} // Clear obsolete per-team credentials too.
           $("#invite-url").value = ""; $("#invite-exp").textContent = "";
           $("#invite-box").hidden = true; $("#invite-show").hidden = false;
         }
         function start(value) {
-          token = value; stopped = false; sessionKey.set(value);
+          token = value; stopped = false;
           const master = clear($("#master"));
           master.append(h("div", { id: "prompt-bar", class: "prompt-bar" }), h("div", { id: "sections", class: "sections" }));
           $("#huddle-list").hidden = false; $("#huddle-view").hidden = true;
@@ -2210,7 +2217,9 @@
       });
       const teamRoute = typeof location !== "undefined" && /^\/t\/([a-z0-9]+)$/.exec(location.pathname);
       const memberKey = hub.takeToken();
+      const savedSession = sessionStore.get();
       if (memberKey) startSession(memberKey, "member");
+      else if (savedSession) startSession(savedSession.key, savedSession.mode);
       else showAuth();
     })();
   </script>
