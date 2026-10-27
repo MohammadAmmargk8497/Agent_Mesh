@@ -5,6 +5,7 @@ import hubJoin from "./hub_join.html";
 export { HubRoom } from "./openhuddle/hub-room";
 import type { HubRoom } from "./openhuddle/hub-room";
 import { Coordination, HttpError } from "./coordination";
+import { exportSqlite } from "./openhuddle/sqlite-export";
 
 interface Env {
   ROOM: DurableObjectNamespace<Room>;
@@ -13,6 +14,9 @@ interface Env {
   AGENT_A_TOKEN: string;
   AGENT_B_TOKEN: string;
   LIMITER?: RateLimit;
+  // Independent owner credential; never an agent/member token or token list.
+  ADMIN_EXPORT_TOKEN?: string;
+  ADMIN_EXPORT_LIMITER?: RateLimit;
 }
 type Agent = "agent-a" | "agent-b";
 const AGENTS: Agent[] = ["agent-a", "agent-b"];
@@ -106,6 +110,63 @@ async function legacyAdapter(request: Request, env: Env, ip: string): Promise<Re
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
+    if (url.pathname === "/admin/export") {
+      // Fail closed if the dedicated limiter has not been bound. This route
+      // never enters hub auth (which writes presence/seed state) or legacy APIs.
+      if (!env.ADMIN_EXPORT_LIMITER) return error("export unavailable", 503);
+      const ip = request.headers.get("cf-connecting-ip") ?? "unknown";
+      if (!(await env.ADMIN_EXPORT_LIMITER.limit({ key: `export-ip:${ip}` })).success) return error("rate limited", 429);
+      const header = request.headers.get("authorization") ?? "";
+      const token = header.startsWith("Bearer ") ? header.slice(7).trim() : "";
+      const secret = env.ADMIN_EXPORT_TOKEN ?? "";
+      if (secret.length < 32 || !token ||
+          !crypto.subtle.timingSafeEqual(await sha256(token), await sha256(secret)) ||
+          await identify(token, env)) return error("unauthorized", 401);
+      if (request.method !== "GET") return error("method not allowed", 405);
+      if (!(await env.ADMIN_EXPORT_LIMITER.limit({ key: "export-owner" })).success) return error("rate limited", 429);
+      try {
+        const snapshots = await Promise.allSettled([
+          (async () => env.ROOM.get(env.ROOM.idFromName("default-room")).exportData())(),
+          (async () => env.HUB.get(env.HUB.idFromName("openhuddle-hub")).exportData())(),
+        ]);
+        if (snapshots.some(snapshot => snapshot.status === "rejected")) {
+          await Promise.allSettled(snapshots.map(snapshot => snapshot.status === "fulfilled" ? snapshot.value.body?.cancel() : undefined));
+          throw new Error("incomplete export");
+        }
+        // Response bodies cross RPC as streams, not a size-limited serialized
+        // object. Forward both without buffering their JSON again in the Worker.
+        const readers = snapshots.map(snapshot => {
+          if (snapshot.status !== "fulfilled") throw new Error("incomplete export");
+          return snapshot.value.body!.getReader();
+        });
+        const encoder = new TextEncoder();
+        const prefix = JSON.stringify({ format: "agentmesh-sqlite-export", version: 1,
+          exported_at: new Date().toISOString() }).slice(0, -1) + ',"databases":{"room":';
+        let index = 0;
+        const body = new ReadableStream<Uint8Array>({
+          start(controller) { controller.enqueue(encoder.encode(prefix)); },
+          async pull(controller) {
+            try {
+              const chunk = await readers[index].read();
+              if (!chunk.done) { controller.enqueue(chunk.value); return; }
+              readers[index].releaseLock();
+              if (++index === readers.length) {
+                controller.enqueue(encoder.encode("}}"));
+                controller.close();
+              } else controller.enqueue(encoder.encode(',"hub":'));
+            } catch (err) {
+              controller.error(err);
+              await Promise.allSettled(readers.slice(index).map(reader => reader.cancel()));
+            }
+          },
+          async cancel() { await Promise.allSettled(readers.slice(index).map(reader => reader.cancel())); },
+        });
+        return new Response(body, { headers: json(null).headers });
+      } catch {
+        // Do not return a partial export, SQL text, or credentials on failure.
+        return error("export failed", 500);
+      }
+    }
     // Hub member tokens live in the hub DB, not the legacy environment identify gate.
     const hubRoute = url.pathname.startsWith("/api/") || url.pathname.startsWith("/t/") || url.pathname.startsWith("/join/") || url.pathname === "/robots.txt";
     if (hubRoute) {
@@ -214,6 +275,10 @@ export class Room extends DurableObject<Env> {
   }
 
   private sql(query: string, ...args: unknown[]) { return this.ctx.storage.sql.exec(query, ...args); }
+
+  // RPC-only: the outer Worker authorizes /admin/export before invoking this.
+  // No public HTTP path or caller-controlled identity header can select it.
+  exportData() { return json(exportSqlite(this.ctx.storage.sql)); }
 
   private atomic<T>(callback: () => T): T {
     const pushes: Array<() => void> = [];

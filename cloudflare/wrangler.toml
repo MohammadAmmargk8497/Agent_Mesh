@@ -15,6 +15,13 @@ name = "LIMITER"
 namespace_id = "1001"
 simple = { limit = 120, period = 60 }
 
+# Separate export budget: per IP, then a shared key for authenticated exports.
+# ADMIN_EXPORT_TOKEN is a Wrangler secret, never an agent token or a [vars] value.
+[[ratelimits]]
+name = "ADMIN_EXPORT_LIMITER"
+namespace_id = "1002"
+simple = { limit = 2, period = 60 }
+
 [[durable_objects.bindings]]
 name = "ROOM"
 class_name = "Room"

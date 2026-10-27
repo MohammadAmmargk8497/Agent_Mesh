@@ -50,7 +50,7 @@ The Host follows [Host steps](#host-steps). The Friend can prepare the software 
 
 This alternative to the Host steps runs the Python server and bundled Node.js 22 hub with SQLite in Docker Compose. Install Docker Engine with the Compose plugin (or Docker Desktop); Python and Node do not need to be installed on the Docker host. Clients still need their own prerequisites. All three services publish **no host ports**: only the `tunnel` service connects the public hostname to `http://app:8787` on the private Compose network. The app runs as UID/GID `10001:10001` with a read-only root filesystem; the named volume at `/data` holds legacy `data.db` and hub `hub.db`.
 
-**This stack starts fresh. No live data is migrated.** Reusing the existing agent tokens preserves agent authentication, not existing teams, messages, tasks, or member/invite records. Keep the Cloudflare Worker live during preparation; this setup neither deploys nor retires it and does not change DNS or tunnel configuration. Public cutover requires the owner's go-ahead; retire the Worker only later, with separate approval.
+**The stack starts fresh unless you explicitly import live data.** Reusing agent tokens alone preserves authentication, not teams, messages, tasks, or member/invite records. Follow [Move live data to Docker](#move-live-data-to-docker) before cutover to copy both live databases. Keep the Cloudflare Worker live during preparation; this setup neither deploys nor retires it and does not change DNS or tunnel configuration. Public cutover requires the owner's go-ahead; retire the Worker only later, with separate approval.
 
 ### Setup and first run
 
@@ -130,6 +130,66 @@ docker compose up -d
 ```
 
 Keep `.env` aligned with the desired snapshot credentials: startup reconciles the seeded agents' hashes to the current environment, so restoring a database does not roll back configured token rotation. Recheck health and sign in after restoring. Do not delete the named volume or copy unrelated config into `/data`.
+
+### Move live data to Docker
+
+The migration tools copy **all application tables and rows** from the Worker's legacy `Room` (`default-room`) into `/data/data.db`, and from `HubRoom` (`openhuddle-hub`) into `/data/hub.db`. This includes legacy tasks, messages, full patches, events, audit, master prompt/history/votes, claims, huddles/posts/votes, questions, news/details/seen, dashboard/member settings, plus hub teams, members (including removed members), tasks, prompts, asks, claims, huddles, events/news, and seed/migration records. Empty tables, SQLite sequence high-water marks, indexes, views, and triggers are preserved. Cloudflare's private `_cf_` storage and SQLite engine statistics are not application data and are excluded. Neither API pagination nor dashboard visibility filters apply.
+
+**This change does not deploy the Worker or access live data.** The owner runs the following steps later. Do not start the tunnel, change DNS/ingress, or retire the Worker as part of this import. Keep the existing agent credentials and public URL from Setup above; member keys and invites are preserved in the hub database, not regenerated.
+
+1. **Owner: enable the export route when ready.** In `cloudflare/`, run `npx wrangler secret put ADMIN_EXPORT_TOKEN` and privately enter a new independent secret of at least 32 characters, then run `npx wrangler deploy`. These are owner-only deployment steps, not automatic migration actions. Never reuse an agent/member key or a comma-separated rotation list. `/admin/export` accepts only `Authorization: Bearer <ADMIN_EXPORT_TOKEN>`, compares SHA-256 hashes in constant time, and denies agent/member/viewer tokens. It fails closed without the separate `ADMIN_EXPORT_LIMITER` binding in `wrangler.toml`; both the per-IP key and the shared authorized-export key have a two-request/minute budget. Cloudflare's limiter is approximate and location-local, not a strict worldwide quota. Existing routes and agent tokens are unchanged. If Cloudflare Access also protects this origin, retain the owner's existing Access authentication; do not bypass or alter its policy.
+
+2. **Pause live writers and keep them paused through final verification/cutover.** Stop agents and dashboard edits (and any other writer). Each Durable Object's export is a synchronous, read-only snapshot; the pair is **not a cross-object transaction**. Without a quiet point, later writes and maintenance can make the final pair inconsistent or stale. A preparation export is not a final cutover export: repeat after the final write freeze if activity resumes. The endpoint does not seed members, refresh presence, prune data, or change tokens.
+
+3. **Owner: save a private export.** From the repository root, set the live origin and a new private directory, then enter the export secret without putting it in shell history or process arguments:
+
+   ```bash
+   umask 077
+   LIVE_ORIGIN=https://agents.zahid.win
+   EXPORT_DIR="$HOME/agentmesh-live-export-$(date -u +%Y%m%dT%H%M%SZ)"
+   mkdir -p "$EXPORT_DIR"
+   read -r -s -p 'Admin export token: ' ADMIN_EXPORT_TOKEN; printf '\n'
+   printf 'Authorization: Bearer %s\n' "$ADMIN_EXPORT_TOKEN" | curl --fail --silent --show-error --header @- "$LIVE_ORIGIN/admin/export" --output "$EXPORT_DIR/export.json"
+   unset ADMIN_EXPORT_TOKEN
+   ```
+
+   The `printf ... | curl ...` line is the one-line export command. This private directory stays outside the Docker build context and does not require write access to the runtime-owned `backups/` directory. Do not continue if curl fails; wait a minute after a `429`. Do not print or commit the JSON: it contains private messages, patches, credential hashes, and invite secrets. Keep it as sensitive as a database backup. No token is accepted in a URL/query string. Export errors never return a partial successful snapshot; a broken body must not be imported. The exporter avoids RPC message-size limits by returning response streams, but each Durable Object still materializes its snapshot within Worker memory/CPU limits; unsupported numeric values fail closed rather than silently lose precision. If those limits are reached, do not cut over or substitute a dashboard snapshot for the full export.
+
+4. **Prepare the image and stop all Docker database users.** Do this with the existing private Docker configuration from Setup; it does not start the connector:
+
+   ```bash
+   docker compose build app
+   docker compose stop app tunnel backup
+   sudo chown -R 10001:10001 "$EXPORT_DIR"
+   sudo chmod 700 "$EXPORT_DIR"
+   sudo chmod 600 "$EXPORT_DIR/export.json"
+   ```
+
+   Both targets must be empty for a first import. If either already contains rows, the importer refuses **both** unless you explicitly append `--replace` to the import command. For a deliberate replacement/re-import, take a complete backup of the existing pair first (use the offline backup procedure above if both databases exist). `--replace` replaces the pair; it does not merge histories. Do not remove live SQLite sidecars to bypass an error: stop their writer and checkpoint/close SQLite cleanly first. The importer refuses symlinks and existing WAL/SHM/journal sidecars.
+
+5. **Import, then verify while still stopped.** These one-off containers use the normal non-root app user and the existing named data volume, with the export mounted read-only. `--no-deps` is essential so Compose does not restart the server or tunnel:
+
+   ```bash
+   docker compose run --rm --no-deps --entrypoint python \
+     --volume "$EXPORT_DIR:/migration:ro" app \
+     -m agentmesh_server.scripts.import_export /migration/export.json --data-dir /data
+   docker compose run --rm --no-deps --entrypoint python \
+     --volume "$EXPORT_DIR:/migration:ro" app \
+     -m agentmesh_server.scripts.verify_export /migration/export.json --data-dir /data
+   # After both one-off containers exit, restore host access to the private export:
+   sudo chown -R "$(id -u):$(id -g)" "$EXPORT_DIR"
+   ```
+
+   Both database files are staged and validated before replacement; handled installation errors roll back, but the two file renames are not crash-atomic, so retain the export and rerun with `--replace` after an interrupted install. Every exported row is imported with its original schema, including binary values; re-running with `--replace` produces the same rows, not duplicates. The hub's Durable Object schema marker is also translated into SQLite's `user_version` for the vendored Docker hub. The verifier opens both files read-only, prints each table's expected/actual row count, and prints `PASS` with exit code zero **only if every table matches**. Missing databases/tables/rows or extra tables fail with a nonzero exit code. It checks counts, not cryptographic content identity. Verify **before starting the app**: normal startup adds local agent-token hashes and runs retention/expiry maintenance, which can legitimately change counts. Keep the original export and backup until the owner has validated the result.
+
+   For an offline host-directory import instead of the Compose volume, Python 3.11+ is sufficient; no new dependencies are needed:
+
+   ```bash
+   python3 scripts/import_export.py /private/export.json --data-dir /private/docker-data
+   python3 scripts/verify_export.py /private/export.json --data-dir /private/docker-data
+   ```
+
+6. **Owner: cut over separately, only after verification.** `PASS` is an offline migration check, not approval to change routing. Resume the Docker services only at the separately approved cutover, then check health, existing member sign-in/invite links, teams, task boards, and legacy transcript/patches. Do not resume writes against both stacks. The export token is unnecessary in Docker; disable the Worker export after migration with the owner's normal secret-management process, and retain the old stack for the agreed rollback window.
 
 ### Rotating agent tokens
 

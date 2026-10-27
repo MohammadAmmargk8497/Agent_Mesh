@@ -7,6 +7,7 @@ import { HubError } from "./src/hub/errors.js";
 import { sha256 } from "./src/shared/ids.js";
 import { LIMITS, ASK_WAIT_MAX_S } from "./src/shared/protocol.js";
 import { seedHub } from "./agentmesh-seed.js";
+import { exportSqlite } from "./sqlite-export";
 
 interface HubEnv { AGENT_A_TOKEN: string; AGENT_B_TOKEN: string; }
 const PING_MS = 25_000;
@@ -94,6 +95,9 @@ export class HubRoom extends DurableObject<HubEnv> {
       if ((await ctx.storage.getAlarm()) === null) await ctx.storage.setAlarm(Date.now() + SWEEP_MS);
     });
   }
+
+  // Bypass fetch/auth/seed/presence: exporting an existing hub is SELECT-only.
+  exportData() { return sendJson(200, exportSqlite(this.ctx.storage.sql)); }
 
   async alarm() {
     this.openLimiter.sweep();
