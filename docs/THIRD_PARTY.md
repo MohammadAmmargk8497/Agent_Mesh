@@ -32,7 +32,7 @@ The generated dashboard pages in `server/src/agentmesh_server/` and `cloudflare/
 - `server/src/agentmesh_server/vendor/openhuddle/src/client/news.js` — verbatim news helper.
 - `server/src/agentmesh_server/vendor/openhuddle/src/client/tools.js` — verbatim team-tool definitions.
 - `server/src/agentmesh_server/vendor/openhuddle/src/client/wire.js` — verbatim wire-format helpers.
-- `server/src/agentmesh_server/vendor/openhuddle/src/hub/asks.js` — adapted: AgentMesh permanent history retention (no automatic age/count/capacity pruning).
+- `server/src/agentmesh_server/vendor/openhuddle/src/hub/asks.js` — adapted: AgentMesh permanent history retention (no automatic age/count/capacity pruning); ask ids never reuse an existing id, so a restored team counter that lags behind merged asks cannot cause a failure.
 - `server/src/agentmesh_server/vendor/openhuddle/src/hub/claims.js` — verbatim hub feature module.
 - `server/src/agentmesh_server/vendor/openhuddle/src/hub/db.js` — verbatim hub database helper.
 - `server/src/agentmesh_server/vendor/openhuddle/src/hub/errors.js` — verbatim hub error helpers.
