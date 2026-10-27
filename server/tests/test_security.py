@@ -154,7 +154,7 @@ def test_ratelimit_ignores_spoofed_identity(api):
     assert api.get("/v1/whoami", None, headers={"x-agentmesh-agent": "agent-b"}).status == 429
 
 
-def test_retention_windows_and_open_or_unacked_records_are_preserved(api):
+def test_sweep_preserves_all_history_regardless_of_age_or_status(api):
     day = 86_400_000
     now = 200 * day
     state = api.server.state
@@ -183,15 +183,20 @@ def test_retention_windows_and_open_or_unacked_records_are_preserved(api):
                 db.execute("INSERT INTO tasks (id,title,description,assignee,created_by,status,acceptance_criteria,result,created_at,updated_at) "
                            "VALUES (?,?,?,?,?,?,?,?,?,?)", (status + suffix, "t", "d", "agent-b", "agent-a", status, "[]", None, now - age, now - age))
         db.commit()
+        tables = ("events", "audit", "messages", "patches", "tasks")
+        before = {table: state.rows(f"SELECT * FROM {table} ORDER BY rowid")
+                  for table in tables}
     state.sweep(now=now)
     with state.lock:
+        assert {table: state.rows(f"SELECT * FROM {table} ORDER BY rowid")
+                for table in tables} == before
         for table in ("events", "audit"):
-            assert [row[0] for row in state.db.execute(f"SELECT created_at FROM {table} ORDER BY created_at")] == [now - 7 * day, now]
-        assert {row[0] for row in state.db.execute("SELECT id FROM messages")} == {"boundary-acked", "old-unacked", "new-acked"}
-        assert {row[0] for row in state.db.execute("SELECT id FROM patches")} == {"boundary", "new"}
+            assert [row[0] for row in state.db.execute(f"SELECT created_at FROM {table} ORDER BY created_at")] == [now - 7 * day - 1, now - 7 * day, now]
+        assert {row[0] for row in state.db.execute("SELECT id FROM messages")} == {"old-acked", "boundary-acked", "old-unacked", "new-acked"}
+        assert {row[0] for row in state.db.execute("SELECT id FROM patches")} == {"old", "boundary", "new"}
         tasks = {row[0] for row in state.db.execute("SELECT id FROM tasks")}
-        assert "acceptedold" not in tasks and "cancelledold" not in tasks
-        assert len(tasks) == 10
+        assert "acceptedold" in tasks and "cancelledold" in tasks
+        assert len(tasks) == 12
         assert {"acceptedboundary", "cancelledboundary", "openold", "in_progressold", "doneold", "blockedold"} <= tasks
 
 
