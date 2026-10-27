@@ -1,4 +1,4 @@
-// Provenance: OpenHuddle 59105e5 src/hub/huddles.js, MIT; verbatim
+// Provenance: OpenHuddle 59105e5 src/hub/huddles.js, MIT; adapted: AgentMesh permanent history retention
 // Huddles: the team thinks together, the way developers do in a room. A brainstorm, a design
 // discussion, a review or a standup, open to everyone (or a few people). Agents add ideas and
 // comments, back or push back on each other's ideas with a reason, and the starter (or the
@@ -8,7 +8,6 @@ import { badRequest, conflict, forbidden, notFound } from './errors.js';
 import { cleanText, cleanName, parse } from './text.js';
 
 const RECENT_CLOSED_MS = 7 * 24 * 3600_000;
-const KEEP_CLOSED_MS = 30 * 24 * 3600_000;
 const EVENT_TEXT = 500;
 const TOP_IDEAS = 10;
 
@@ -123,36 +122,8 @@ function touch(hub, row) {
 function nextSeq(hub, row) {
   const { next_post } = hub.get('SELECT next_post FROM huddles WHERE team_id = ? AND id = ?', row.team_id, row.id);
   if (next_post > LIMITS.huddle_posts) throw conflict('huddle_full', `${row.id} has ${LIMITS.huddle_posts} posts. Close it and start a new one.`);
-  makeRoom(hub, row.team_id);
   hub.run('UPDATE huddles SET next_post = next_post + 1 WHERE team_id = ? AND id = ?', row.team_id, row.id);
   return next_post;
-}
-
-function dropHuddle(hub, teamId, id) {
-  for (const table of ['huddle_votes', 'huddle_posts']) hub.run(`DELETE FROM ${table} WHERE team_id = ? AND huddle_id = ?`, teamId, id);
-  hub.run('DELETE FROM huddles WHERE team_id = ? AND id = ?', teamId, id);
-}
-
-// A team's huddles hold at most LIMITS.huddle_posts_per_team posts. When full, the oldest closed
-// huddles make way; with nothing closed to drop, the post is refused.
-function makeRoom(hub, teamId) {
-  for (;;) {
-    const { n } = hub.get('SELECT COUNT(*) AS n FROM huddle_posts WHERE team_id = ?', teamId);
-    if (n < LIMITS.huddle_posts_per_team) return;
-    const oldest = hub.get("SELECT id FROM huddles WHERE team_id = ? AND status = 'closed' ORDER BY closed_at, created_at LIMIT 1", teamId);
-    if (!oldest) throw conflict('huddles_full', 'The team’s open huddles are full of posts. Close some huddles first.');
-    dropHuddle(hub, teamId, oldest.id);
-  }
-}
-
-// Keeps the newest closed huddles; older ones go, with their posts and votes.
-function trimClosed(hub, teamId) {
-  const old = hub.all(
-    "SELECT id FROM huddles WHERE team_id = ? AND status = 'closed' ORDER BY closed_at DESC, created_at DESC LIMIT -1 OFFSET ?",
-    teamId,
-    LIMITS.huddles_closed_kept,
-  );
-  for (const { id } of old) dropHuddle(hub, teamId, id);
 }
 
 function addPost(hub, member, row, kind, text, onSeq = null) {
@@ -311,7 +282,6 @@ export function close(hub, member, { id, decision, why }) {
     notify,
   });
   const result = { huddle: detail(hub, member, { id: row.id }) };
-  trimClosed(hub, member.team_id);
   return result;
 }
 
@@ -344,13 +314,5 @@ export function detail(hub, member, { id }) {
   };
 }
 
-// Housekeeping: closed huddles go after a month, with their posts and votes, in one transaction.
-export function sweep(hub) {
-  const cutoff = hub.now() - KEEP_CLOSED_MS;
-  const old = "SELECT team_id, id FROM huddles WHERE status = 'closed' AND closed_at < ?";
-  hub.tx(() => {
-    hub.run(`DELETE FROM huddle_votes WHERE (team_id, huddle_id) IN (${old})`, cutoff);
-    hub.run(`DELETE FROM huddle_posts WHERE (team_id, huddle_id) IN (${old})`, cutoff);
-    hub.run("DELETE FROM huddles WHERE status = 'closed' AND closed_at < ?", cutoff);
-  });
-}
+// Kept as a lifecycle hook: closed discussions, posts and votes are permanent history.
+export function sweep(hub) {}

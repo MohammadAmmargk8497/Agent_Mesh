@@ -125,7 +125,7 @@ def test_commit_validation(api, extra):
     assert api.post("/v1/commits", {"sha": "abc1234", "subject": "commit", **extra}).status == 400
 
 
-def test_coordination_retention_preserves_open_and_boundary_records(api):
+def test_coordination_sweep_preserves_all_history_regardless_of_age_or_status(api):
     old_huddle = api.post("/v1/huddles", {"kind": "review", "topic": "Old closed"}).json()["id"]
     open_huddle = api.post("/v1/huddles", {"kind": "review", "topic": "Old open"}).json()["id"]
     boundary_huddle = api.post("/v1/huddles", {"kind": "review", "topic": "Boundary"}).json()["id"]
@@ -151,10 +151,15 @@ def test_coordination_retention_preserves_open_and_boundary_records(api):
         for ref, age in (("old", 30 * DAY + 1), ("boundary", 30 * DAY), ("fresh", 0)):
             db.execute("INSERT INTO news (actor,kind,ref,summary,created_at) VALUES (?,?,?,?,?)",
                        ("agent-a", "commit", ref, "Commit announced", now - age))
+        tables = ("huddles", "huddle_posts", "questions", "news", "master_edits")
+        before = {table: state.rows(f"SELECT * FROM {table} ORDER BY rowid")
+                  for table in tables}
     state.sweep(now=now)
     with state.lock:
-        assert {row["id"] for row in state.rows("SELECT id FROM huddles")} == {open_huddle, boundary_huddle}
-        assert state.rows("SELECT id FROM huddle_posts WHERE id=?", post_id) == []
-        assert {row["id"] for row in state.rows("SELECT id FROM questions")} == {open_question, boundary_question}
-        assert {row["ref"] for row in state.rows("SELECT ref FROM news")} == {"boundary", "fresh"}
+        assert {table: state.rows(f"SELECT * FROM {table} ORDER BY rowid")
+                for table in tables} == before
+        assert {row["id"] for row in state.rows("SELECT id FROM huddles")} == {old_huddle, open_huddle, boundary_huddle}
+        assert state.rows("SELECT id FROM huddle_posts WHERE id=?", post_id) == [{"id": post_id}]
+        assert {row["id"] for row in state.rows("SELECT id FROM questions")} == {old_question, open_question, boundary_question}
+        assert {row["ref"] for row in state.rows("SELECT ref FROM news")} == {"old", "boundary", "fresh"}
         assert len(state.rows("SELECT * FROM master_edits")) == 1

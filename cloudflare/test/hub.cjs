@@ -54,8 +54,11 @@ const post = (route, body, token, status = 200) => call('POST', route, body, tok
 async function drain(reader) { let text = ''; while (true) { const r = await reader.read(); if (r.done) return text; text += new TextDecoder().decode(r.value); } }
 (async () => {
   await require('./export.cjs')();
+  await require('./retention.cjs')();
+  await require('./history.cjs')();
   await testSignin(worker, env);
   await require('./unified_routes.cjs')();
+  await require('./unified_dashboard.cjs').runWorker();
   let state = await get('/api/state');
   assert.equal(state.team.name, 'default');
   assert.equal(state.me.name, 'agent-a');

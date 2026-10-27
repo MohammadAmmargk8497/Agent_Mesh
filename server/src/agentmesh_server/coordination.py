@@ -9,7 +9,7 @@ import json
 import re
 import uuid
 
-from .state import AGENTS, DAY
+from .state import AGENTS
 
 JS_WHITESPACE = "\t\n\v\f\r \u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff"
 CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
@@ -136,16 +136,9 @@ def migrate(db):
 
 
 def sweep(db, now):
-    removed = {}
-    removed["file_claims"] = db.execute("DELETE FROM file_claims WHERE expires_at<=?", (now,)).rowcount
-    removed["news"] = db.execute("DELETE FROM news WHERE created_at<?", (now - 30 * DAY,)).rowcount
-    db.execute("DELETE FROM news_details WHERE news_id NOT IN (SELECT id FROM news)")
-    db.execute("DELETE FROM huddle_posts WHERE huddle_id IN (SELECT id FROM huddles WHERE status='closed' AND closed_at<?)", (now - 90 * DAY,))
-    removed["huddles"] = db.execute("DELETE FROM huddles WHERE status='closed' AND closed_at<?", (now - 90 * DAY,)).rowcount
-    db.execute("DELETE FROM huddle_votes WHERE huddle_id NOT IN (SELECT id FROM huddles)")
-    db.execute("DELETE FROM dashboard_tasks WHERE task_id NOT IN (SELECT id FROM tasks)")
-    removed["questions"] = db.execute("DELETE FROM questions WHERE answered_at IS NOT NULL AND answered_at<?", (now - 30 * DAY,)).rowcount
-    return removed
+    """Expire live claims only; retain all coordination history indefinitely."""
+    return {"file_claims": db.execute(
+        "DELETE FROM file_claims WHERE expires_at<=?", (now,)).rowcount}
 
 
 def news(state, actor, kind, ref, summary, now):

@@ -1,4 +1,4 @@
-// Provenance: OpenHuddle 59105e5 src/hub/prompt.js, MIT; verbatim
+// Provenance: OpenHuddle 59105e5 src/hub/prompt.js, MIT; adapted: AgentMesh permanent history retention
 import { LIMITS } from '../shared/protocol.js';
 import { badRequest, conflict } from './errors.js';
 import { cleanText, cleanName } from './text.js';
@@ -111,11 +111,6 @@ export function promptEdit(hub, member, { section, text, mode = 'replace' }) {
     JSON.stringify(p.sections),
     member.id,
     hub.now(),
-  );
-  hub.run(
-    'DELETE FROM prompt_versions WHERE team_id = ? AND version <= ?',
-    member.team_id,
-    p.version - LIMITS.prompt_versions_kept,
   );
   save(hub, member.team_id, p);
   hub.emit(member.team_id, member.id, 'prompt_edit', { section: s.title, mode, version: p.version });

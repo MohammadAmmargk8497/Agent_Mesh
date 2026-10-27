@@ -126,6 +126,7 @@ const input = JSON.parse(fs.readFileSync(0, 'utf8'));
 
 function browser(snapshot) {
   const ids = new Map(), timers = new Map(), storage = new Map([['papers-theme', 'dark']]);
+  const sessionStorage = new Map();
   let document, timerId = 0, nextStatus = 200, deferred = null;
   class Element {
     constructor(tag) {
@@ -211,6 +212,7 @@ function browser(snapshot) {
   const context = vm.createContext({
     document, AbortController, console,
     localStorage: {getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value), removeItem: key => storage.delete(key)},
+    sessionStorage: {getItem: key => sessionStorage.get(key) ?? null, setItem: (key, value) => sessionStorage.set(key, value), removeItem: key => sessionStorage.delete(key)},
     setInterval: callback => { const id = ++timerId; timers.set(id, callback); return id; },
     clearInterval: id => timers.delete(id),
     fetch: async (url, options) => {
@@ -221,7 +223,7 @@ function browser(snapshot) {
   });
   for (const script of input.scripts) vm.runInContext(script, context, {timeout: 3000});
   return {
-    get, root, document, calls, storage, timers, setStatus: value => { nextStatus = value; },
+    get, root, document, calls, storage, sessionStorage, timers, setStatus: value => { nextStatus = value; },
     deferNext: () => { let release; deferred = new Promise(resolve => { release = resolve; }); return release; },
   };
 }
@@ -251,6 +253,8 @@ async function login(app) {
   assert.equal(app.calls[0].options.headers.Authorization, 'Bearer ' + 'a'.repeat(40));
   assert.equal(app.calls[0].options.cache, 'no-store');
   assert.equal(app.calls[0].options.method ?? 'GET', 'GET');
+  assert.deepEqual(JSON.parse(app.sessionStorage.get('agentmesh:session')), {key: 'a'.repeat(40), mode: 'auto'});
+  assert.ok(![...app.storage.values()].some(value => value.includes('a'.repeat(40))), 'agent token is not saved in localStorage');
   for (const id of ['messages', 'tasks', 'master', 'huddle-list', 'claims', 'questions', 'news', 'patches']) {
     assert.ok(get(id).textContent.includes(input.unsafe), id + ' must preserve untrusted strings as literal text');
     assert.equal(get(id).querySelectorAll('img').length, 0, id + ' must not create injected image nodes');
@@ -297,6 +301,7 @@ async function login(app) {
   assert.equal(get('workspace').hidden, true);
   assert.equal(get('auth').hidden, false);
   assert.equal(app.storage.has('agentmesh-viewer'), false);
+  assert.equal(app.sessionStorage.has('agentmesh:session'), false, 'sign-out clears the saved session');
   assert.equal(app.timers.size, 0);
   for (const id of ['messages', 'tasks', 'master', 'huddle-list', 'huddle-view', 'claims', 'questions', 'news', 'members', 'asks-list']) {
     assert.ok(!get(id).textContent.includes(input.unsafe), id + ' must clear on sign out');
@@ -304,6 +309,7 @@ async function login(app) {
   app.setStatus(403); await login(app);
   assert.equal(get('auth').hidden, false);
   assert.equal(app.storage.has('agentmesh-viewer'), false);
+  assert.equal(app.sessionStorage.has('agentmesh:session'), false, 'failed authentication clears the saved session');
   assert.equal(app.timers.size, 0);
   assert.match(get('auth-error').textContent, /member key|agent token/i);
   for (const call of app.calls) {
