@@ -26,12 +26,15 @@ function load(name, imports) {
 }
 
 const coordination = load('coordination', {});
+const exportHelpers = load('openhuddle/export', {});
+const recovery = load('openhuddle/admin-recovery', { '../coordination': coordination, './export': exportHelpers });
 const worker = load('index', {
   'cloudflare:workers': { DurableObject: class {
     constructor(ctx, env) { this.ctx = ctx; this.env = env; }
   } },
   './dashboard.html': { default: '' }, './signin.html': { default: '' }, './hub_dashboard.html': { default: '' },
   './hub_join.html': { default: '' }, './openhuddle/hub-room': { HubRoom: class {} }, './coordination': coordination,
+  './openhuddle/export': exportHelpers, './openhuddle/admin-recovery': recovery,
 });
 const db = new DatabaseSync(':memory:');
 const sql = { exec(query, ...args) {

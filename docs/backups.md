@@ -113,7 +113,11 @@ same-count edits or delete/insert pairs can escape that check. Export during a
 quiet period for the strongest consistency; retry changed inventories later.
 Disk space must be monitored because every run is kept forever. Protect backup
 storage: it contains private conversations, invitation secrets and token hashes.
-Restoration tooling is not included; preserve the matching source/schema too.
+[Owner rollback and insert-only merge](rollback-merge.md) tooling is available
+separately; preserve the matching source/schema too. Recovery uses this same
+owner secret for mutating routes, not merely read access. It is never scheduled
+by the daily backup timer and has not been run against the live API by offline
+implementation checks.
 
 ## Owner export protocol
 
@@ -141,7 +145,7 @@ the PC tool fails closed on an inventory without both initialized stores.
   Continue until an empty page with `done: true` and `next_after: null`.
   A single row over the budget fails explicitly instead of being truncated.
 
-Responses are `no-store`. Unauthorized credentials receive `401`, writes `405`,
+Responses are `no-store`. Unauthorized credentials receive `401`, writes to these export routes `405`,
 invalid parameters `400`, unknown tables `404`, excessive requests `429`, and
 missing/unavailable dedicated rate limiting or missing/short owner configuration
 `503`. Export errors never fall back to the normal agent limiter. Cloudflare

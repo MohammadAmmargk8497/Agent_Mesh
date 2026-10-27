@@ -126,7 +126,7 @@ class ExportClient:
         self.timeout = timeout
         self.delay = delay
         self.opener = build_opener(NoRedirects())
-        self.headers = {"Authorization": "Bearer " + token, "Accept": "application/json"}
+        self.headers = {"Authorization": "Bearer " + token, "Accept": "application/json", "User-Agent": "agentmesh-backup/1.0"}
         if access_id:
             self.headers.update({"CF-Access-Client-Id": access_id, "CF-Access-Client-Secret": access_secret})
         self._last_request = None

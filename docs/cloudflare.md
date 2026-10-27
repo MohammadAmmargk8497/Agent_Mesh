@@ -80,3 +80,11 @@ limiting fails closed with `503`; ordinary clients and their tokens are unchange
 No deployment, live export, token provisioning or timer installation is performed
 by the implementation's offline checks. Live retention rules above still apply;
 backups cannot recover data already deleted before the first run.
+
+[Owner rollback and insert-only merge](rollback-merge.md) adds separate
+`POST /admin/restore` and `/admin/import` routes under that same owner secret and
+limiter. The PC script validates a completed backup before restoring both stores
+to the oldest supported lookup and importing missing primary keys. Existing rows
+win; no imports update/delete data or change local backups. This is a separately
+reviewed owner operation, not a deployment or live restore performed by the
+offline checks. The token must now be protected as a recovery/write credential.

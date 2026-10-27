@@ -33,7 +33,7 @@ function load(filename) {
   vm.runInNewContext(source, { module, exports: module.exports, require: localRequire,
     crypto: webcrypto, Buffer, Request, Response, Headers, URL, TextEncoder, TextDecoder,
     Uint8Array, ArrayBuffer, ReadableStream, AbortController, btoa, console,
-    structuredClone, setTimeout, clearTimeout, setInterval, clearInterval,
+    structuredClone, atob, setTimeout, clearTimeout, setInterval, clearInterval,
   }, { filename });
   return module.exports;
 }
@@ -46,8 +46,10 @@ function context(db = new DatabaseSync(':memory:')) {
     if (!args.length && query.trim().split(';').filter(s => s.trim()).length > 1) db.exec(query);
     else {
       const statement = db.prepare(query);
-      if (statement.columns().length) rows = statement.all(...args);
-      else statement.run(...args);
+      // DO SQL binds ArrayBuffer for BLOBs; node:sqlite takes byte views.
+      const bound = args.map(value => value instanceof ArrayBuffer ? new Uint8Array(value) : value);
+      if (statement.columns().length) rows = statement.all(...bound);
+      else statement.run(...bound);
     }
     return { [Symbol.iterator]: () => rows[Symbol.iterator](), toArray: () => rows, one: () => {
       assert.equal(rows.length, 1); return rows[0];

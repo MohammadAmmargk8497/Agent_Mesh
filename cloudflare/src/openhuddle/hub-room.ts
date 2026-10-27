@@ -1,4 +1,4 @@
-// Provenance: OpenHuddle 59105e5 src/hub/server.js, MIT; adapted: Worker Request/Response routing, SSE, Durable Object lifecycle and read-only owner export RPC
+// Provenance: OpenHuddle 59105e5 src/hub/server.js, MIT; adapted: Worker Request/Response routing, SSE, Durable Object lifecycle, read-only owner export and owner recovery/import RPCs
 import { DurableObject } from "cloudflare:workers";
 import { DoSqlite } from "./do-sqlite";
 import { openDb } from "./src/hub/db-do.js";
@@ -8,6 +8,8 @@ import { sha256 } from "./src/shared/ids.js";
 import { LIMITS, ASK_WAIT_MAX_S } from "./src/shared/protocol.js";
 import { seedHub } from "./agentmesh-seed.js";
 import { exportTables, exportPage } from "./export";
+import { AdminRecovery } from "./admin-recovery";
+import { HttpError } from "../coordination";
 
 interface HubEnv { AGENT_A_TOKEN: string; AGENT_B_TOKEN: string; }
 const PING_MS = 25_000;
@@ -80,6 +82,7 @@ async function readBody(request: Request): Promise<any> {
 }
 
 export class HubRoom extends DurableObject<HubEnv> {
+  private ownerRecovery: AdminRecovery;
   private hub: any;
   private seeded = false;
   private openLimiter = new Limiter(20, 3600_000);
@@ -90,6 +93,7 @@ export class HubRoom extends DurableObject<HubEnv> {
 
   constructor(ctx: DurableObjectState, env: HubEnv) {
     super(ctx, env);
+    this.ownerRecovery = new AdminRecovery(ctx);
   }
 
   private initialize() {
@@ -106,12 +110,17 @@ export class HubRoom extends DurableObject<HubEnv> {
     return this.ctx.storage.sql.exec("SELECT 1 FROM members WHERE token_hash=? LIMIT 1", hash).toArray().length > 0;
   }
 
-  exportTables() { return exportTables(this.ctx.storage.sql); }
+  prepareRestore(time: number, dryRun: boolean) { return this.ownerRecovery.prepareRestore(time, dryRun); }
+  abortRestore() { this.ownerRecovery.abortRestore(); }
+  importRows(table: string, rows: unknown) { return this.ownerRecovery.importRows(table, rows); }
+  exportTables() { this.ownerRecovery.assertReady(); return exportTables(this.ctx.storage.sql); }
   exportPage(table: string, after: string | null, limit: number) {
+    this.ownerRecovery.assertReady();
     return exportPage(this.ctx.storage.sql, table, after, limit);
   }
 
   async alarm() {
+    this.ownerRecovery.assertReady();
     this.initialize();
     this.openLimiter.sweep();
     this.memberLimiter.sweep();
@@ -185,6 +194,7 @@ export class HubRoom extends DurableObject<HubEnv> {
 
   async fetch(request: Request): Promise<Response> {
     try {
+      this.ownerRecovery.assertReady();
       this.initialize();
       const url = new URL(request.url);
       this.hub.publicUrl = url.origin;
@@ -261,6 +271,7 @@ export class HubRoom extends DurableObject<HubEnv> {
       if (!calls[path]) throw new HubError(404, "not_found", `No route POST ${path}.`);
       return sendJson(200, calls[path]());
     } catch (err) {
+      if (err instanceof HttpError) return sendJson(err.status, { error: err.message, code: "recovery_pending" });
       if (err instanceof HubError) return sendJson(err.status, { error: err.message, code: err.code });
       return sendJson(500, { error: "Something went wrong on the hub.", code: "internal" });
     }
