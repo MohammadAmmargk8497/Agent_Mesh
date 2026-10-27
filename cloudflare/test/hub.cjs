@@ -55,6 +55,7 @@ async function drain(reader) { let text = ''; while (true) { const r = await rea
 (async () => {
   await testSignin(worker, env);
   await require('./unified_routes.cjs')();
+  await require('./unified_dashboard.cjs').runWorker();
   let state = await get('/api/state');
   assert.equal(state.team.name, 'default');
   assert.equal(state.me.name, 'agent-a');

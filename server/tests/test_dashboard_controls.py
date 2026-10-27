@@ -214,7 +214,8 @@ def test_dashboard_task_and_prompt_controls_call_real_routes(api):
   assert.equal(app.calls.length, 0, 'no fetch before login');
   await login(app, 'a');
   assert.match(app.calls[0].url, /^\/v1\/dashboard\/state\?after=0$/);
-  assert.equal(app.storage.has('agentmesh-viewer'), false, 'agent tokens stay memory-only');
+  assert.equal(app.storage.has('agentmesh-viewer'), false, 'agent tokens stay out of localStorage');
+  assert.deepEqual(JSON.parse(app.sessionStorage.get('agentmesh:session')), {key: input.tokens.a, mode: 'auto'}, 'agent token is remembered only for this browser session');
   assert.ok(![...app.storage.values()].includes(input.tokens.a), 'agent token is not persisted under another key');
   for (const name of ['take', 'accept', 'decline', 'start', 'release']) {
     const path = '/v1/dashboard/tasks/' + input.seed.tasks[name] + '/' + name;
@@ -310,6 +311,7 @@ def test_dashboard_rejected_viewer_and_invalid_credentials_never_offer_writes(tm
     assert.equal(app.get('messages').textContent, '');
     assert.equal(app.get('member-heartbeats').textContent, '');
     assert.equal(app.storage.has('agentmesh-viewer'), false);
+    assert.equal(app.sessionStorage.has('agentmesh:session'), false, 'rejected credentials are not remembered');
   }
   assert.ok(app.calls.some(call => call.url.startsWith('/v1/dashboard/state') && call.status === 401), 'viewer token is rejected by agent authentication');
   assert.ok(!app.calls.some(call => call.url.startsWith('/v1/transcript')), 'removed viewer transcript is never requested');
@@ -490,4 +492,5 @@ def test_dashboard_write_errors_drafts_duplicate_submit_and_logout_races(api):
   assert.equal(get('claims').textContent, '', 'late completion cannot restore private claims');
   assert.equal(app.root.querySelectorAll('[data-write]').length, 0);
   assert.ok(![...app.storage.values()].includes(input.tokens.a), 'logout leaves no persisted agent credential');
+  assert.equal(app.sessionStorage.has('agentmesh:session'), false, 'logout clears the saved agent session');
 """, seed)

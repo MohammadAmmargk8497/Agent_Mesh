@@ -30,7 +30,7 @@ function parseDocument(html) {
 
 function browser(input, request, options = {}) {
   const ids = new Map(), timers = new Map(), storage = new Map([['papers-theme', 'dark']]);
-  const sessionStorage = new Map(), calls = [], historyCalls = [], clipboard = [], streams = [];
+  const sessionStorage = options.sessionStorage || new Map(), calls = [], historyCalls = [], clipboard = [], streams = [];
   let document, nextTimer = 0;
   class Element {
     constructor(tag) {
@@ -227,8 +227,8 @@ function postFrom(calls, route) {
 }
 
 async function run(request, tokens) {
-  const html = fs.readFileSync(dashboardPath, 'utf8');
-  assert.equal(html, fs.readFileSync(path.join(root, 'server/src/agentmesh_server/dashboard.html'), 'utf8'), 'both servers ship the same page');
+  const dashboard = fs.readFileSync(dashboardPath), html = dashboard.toString('utf8');
+  assert.deepEqual(dashboard, fs.readFileSync(path.join(root, 'server/src/agentmesh_server/dashboard.html')), 'both servers ship byte-identical pages');
   const input = { tree: parseDocument(html), scripts: [...html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script\s*>/gi)].map(match => match[1]) };
   async function api(route, body, token = tokens.a) {
     const response = await request(route, { headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
@@ -236,6 +236,7 @@ async function run(request, tokens) {
     const data = await response.json(); assert.equal(response.status, 200, route + ': ' + JSON.stringify(data)); return data;
   }
   const initial = await api('/api/state'); input.team = initial.team.id;
+  await runSessions(input, request, tokens, html);
   const empty = browser(input, request); await idle(empty);
   assert.equal(empty.calls.length, 0, 'no authenticated requests before a key is supplied');
   assert.equal(empty.get('access-mode'), null, 'one access form has no viewer or mode selector');
@@ -273,7 +274,7 @@ async function run(request, tokens) {
   assert.equal(app.get('auth').hidden, false); assert.equal(app.get('workspace').hidden, true);
   assert.equal(app.get('member-heartbeats').textContent, '', 'sign-out clears other members');
   assert.equal(app.timers.size, 0, 'sign-out stops polling');
-  assert.ok(![...app.sessionStorage.values()].includes(tokens.a), 'sign-out removes remembered member key');
+  assert.equal(app.sessionStorage.has('agentmesh:session'), false, 'sign-out removes remembered member session');
   await login(app, tokens.a);
 
   const rootApp = browser(input, request, { pathname: '/', hash: '#k=' + encodeURIComponent(tokens.a) }); await idle(rootApp);
@@ -285,7 +286,8 @@ async function run(request, tokens) {
   assert.match(agent.get('connection-status').textContent, /agent-a/, 'typed legacy token selects its agent identity');
   assert.ok(agent.calls.some(call => call.url === '/v1/dashboard/state?after=0' && call.status === 200));
   assert.ok(!agent.calls.some(call => call.url.startsWith('/api/')), 'legacy agent session does not mix team credentials');
-  assert.ok(![...agent.storage.values(), ...agent.sessionStorage.values()].includes(tokens.a), 'legacy agent credential stays memory-only');
+  assert.deepEqual(JSON.parse(agent.sessionStorage.get('agentmesh:session')), { key: tokens.a, mode: 'auto' }, 'typed agent token is remembered with its detection mode');
+  assert.ok(![...agent.storage.values()].some(value => value.includes(tokens.a)), 'legacy agent credential is never saved in localStorage');
   for (const enabled of [false, true]) {
     const before = agent.calls.length, toggle = agent.get('auto-respond');
     assert.ok(toggle, 'agent settings retain a writable control'); toggle.checked = enabled; await toggle.fire('change'); await idle(agent);
@@ -296,6 +298,7 @@ async function run(request, tokens) {
   rejected.get('access-key').value = tokens.viewer; await rejected.get('access-form').fire('submit'); await idle(rejected);
   assert.equal(rejected.get('auth').hidden, false, 'removed viewer credential cannot authenticate');
   assert.equal(rejected.get('workspace').hidden, true);
+  assert.equal(rejected.sessionStorage.has('agentmesh:session'), false, 'failed typed authentication clears the saved session');
   assert.equal(rejected.root.querySelectorAll('[data-write]').length, 0, 'rejected viewer token exposes no writes');
   assert.ok(rejected.calls.every(call => (call.options.method || 'GET') === 'GET'), 'rejected viewer never causes a write');
   assert.ok(!rejected.calls.some(call => call.url.startsWith('/v1/transcript')), 'removed viewer read path is never requested');
@@ -347,13 +350,18 @@ async function run(request, tokens) {
   assert.ok(typedMember.calls.some(call => call.url.startsWith('/v1/dashboard/state') && call.status === 401), 'member key is not accepted as a legacy agent token');
   assert.ok(typedMember.calls.some(call => call.url === '/api/state' && call.status === 200), 'typed member key opens its own team workspace');
   assert.ok(typedMember.get('members').textContent.includes('Isolated owner'));
-  assert.ok([...typedMember.sessionStorage.values()].includes(created.token), 'member key is remembered only for its browser session');
+  assert.deepEqual(JSON.parse(typedMember.sessionStorage.get('agentmesh:session')), { key: created.token, mode: 'auto' }, 'typed member key is remembered with its detection mode');
+  const reloadedMember = browser(input, request, { pathname: '/', sessionStorage: typedMember.sessionStorage }); await idle(reloadedMember);
+  assert.equal(reloadedMember.get('auth').hidden, true, 'auto-detected member key resumes on reload');
+  assert.ok(reloadedMember.get('members').textContent.includes('Isolated owner'));
+  assert.ok(reloadedMember.calls.some(call => call.url.startsWith('/v1/dashboard/state') && call.status === 401));
+  assert.ok(reloadedMember.calls.some(call => call.url === '/api/state' && call.status === 200));
   await set(typedMember, 'hub-claim-path', 'src/typed-member.txt');
   const memberBefore = typedMember.calls.length;
   await typedMember.get('hub-claim-form').fire('submit'); await idle(typedMember);
   assert.deepEqual(postFrom(typedMember.calls.slice(memberBefore), '/api/claims').paths, ['src/typed-member.txt'], 'typed member key writes within the detected team');
   await typedMember.get('sign-out').click(); await idle(typedMember);
-  assert.ok(![...typedMember.sessionStorage.values()].includes(created.token), 'sign-out clears the typed member key');
+  assert.equal(typedMember.sessionStorage.has('agentmesh:session'), false, 'sign-out clears the typed member session');
   const wrongTeam = browser(input, request, { hash: '#k=' + encodeURIComponent(created.token) }); await idle(wrongTeam);
   assert.equal(wrongTeam.get('auth').hidden, false, 'a key cannot open another team URL');
   assert.ok(!wrongTeam.get('members').textContent.includes('Isolated owner'));
@@ -361,6 +369,79 @@ async function run(request, tokens) {
 
   await runActions(input, request, api, tokens);
   console.log('Unified dashboard panels, member sessions, hub actions, presence, safe names and team scoping passed');
+}
+
+async function runSessions(input, request, tokens, html) {
+  const sessionKey = 'agentmesh:session';
+  function assertPrivate(app, token) {
+    assert.ok(!html.includes(token), 'credential is not embedded in the served HTML');
+    assert.ok(!app.root.textContent.includes(token), 'credential is not rendered as page text');
+    function check(node) {
+      assert.ok(!node.value.includes(token), 'credential is not retained in a DOM field');
+      assert.ok(!Object.values(node.attrs).some(value => value.includes(token)), 'credential is not embedded in a DOM attribute');
+      node.children.forEach(check);
+    }
+    check(app.root);
+    assert.ok(![...app.storage.values()].some(value => value.includes(token)), 'credential is never copied into localStorage');
+  }
+  function assertSession(app, token, mode) {
+    assert.deepEqual([...app.sessionStorage.keys()], [sessionKey], 'one session entry stores the key and mode');
+    assert.deepEqual(JSON.parse(app.sessionStorage.get(sessionKey)), { key: token, mode });
+    assertPrivate(app, token);
+  }
+  for (const mode of ['member', 'agent', 'auto']) {
+    const options = mode === 'member' ? { hash: '#k=' + encodeURIComponent(tokens.a) } : { pathname: '/' };
+    // Explicit agent mode is available when restoring a previously saved session;
+    // the form deliberately offers no mode selector and uses auto detection.
+    if (mode === 'agent') options.sessionStorage = new Map([[sessionKey, JSON.stringify({ key: tokens.a, mode })]]);
+    const first = browser(input, request, options);
+    if (mode === 'auto') await login(first, tokens.a); else await idle(first);
+    assert.equal(first.get('auth').hidden, true, mode + ' session authenticates');
+    assertSession(first, tokens.a, mode);
+
+    const reload = browser(input, request, { pathname: first.location.pathname, sessionStorage: first.sessionStorage });
+    await idle(reload);
+    assert.equal(reload.get('auth').hidden, true, mode + ' session resumes without entering a key');
+    assert.equal(reload.get('workspace').hidden, false);
+    assert.equal(reload.calls[0].url, mode === 'member' ? '/api/state' : '/v1/dashboard/state?after=0', 'reload honors the saved ' + mode + ' mode');
+    for (const call of reload.calls) assert.equal(call.options.headers.Authorization, 'Bearer ' + tokens.a);
+    if (mode === 'member') assert.ok(reload.calls.every(call => !call.url.startsWith('/v1/')));
+    else assert.ok(reload.calls.every(call => !call.url.startsWith('/api/')));
+    assertSession(reload, tokens.a, mode);
+
+    await reload.get('sign-out').click(); await idle(reload);
+    assert.equal(reload.sessionStorage.has(sessionKey), false, mode + ' sign-out removes the saved session');
+    const signedOut = browser(input, request, { pathname: reload.location.pathname, sessionStorage: reload.sessionStorage });
+    await idle(signedOut);
+    assert.equal(signedOut.calls.length, 0, 'reload after ' + mode + ' sign-out makes no authenticated request');
+    assert.equal(signedOut.get('auth').hidden, false);
+    assert.equal(signedOut.get('workspace').hidden, true);
+    assertPrivate(signedOut, tokens.a);
+  }
+
+  const fragment = browser(input, request, { hash: '#k=' + encodeURIComponent(tokens.a),
+    sessionStorage: new Map([[sessionKey, JSON.stringify({ key: tokens.b, mode: 'agent' })]]) });
+  await idle(fragment);
+  assert.equal(fragment.get('auth').hidden, true, 'fragment wins over a saved session');
+  assert.equal(fragment.calls[0].url, '/api/state', 'fragment always uses member mode');
+  assert.ok(fragment.calls.every(call => call.options.headers.Authorization === 'Bearer ' + tokens.a), 'saved credential is not used when a fragment is supplied');
+  assert.equal(fragment.location.hash, '', 'fragment credential is removed from the URL');
+  assert.ok(fragment.historyCalls.length);
+  assertSession(fragment, tokens.a, 'member');
+
+  for (const mode of ['member', 'agent', 'auto']) {
+    const rejected = browser(input, request, { pathname: '/',
+      sessionStorage: new Map([[sessionKey, JSON.stringify({ key: tokens.viewer, mode })]]) });
+    await idle(rejected);
+    assert.equal(rejected.get('auth').hidden, false, 'rejected saved ' + mode + ' credential returns to authentication');
+    assert.equal(rejected.get('workspace').hidden, true);
+    assert.equal(rejected.sessionStorage.has(sessionKey), false, 'rejected saved ' + mode + ' credential is removed');
+    assert.equal(rejected.timers.size, 0);
+    assertPrivate(rejected, tokens.viewer);
+    const reload = browser(input, request, { pathname: '/', sessionStorage: rejected.sessionStorage }); await idle(reload);
+    assert.equal(reload.calls.length, 0, 'rejected credential is not retried on reload');
+    assert.equal(reload.get('auth').hidden, false);
+  }
 }
 
 async function runActions(input, request, api, tokens) {
@@ -490,14 +571,7 @@ async function runActions(input, request, api, tokens) {
 
 }
 
-module.exports = { browser, parseDocument, idle, login, poll, findButton, click, set, postFrom, run };
-
-if (require.main === module) (async () => {
-  const payload = process.argv[2] ? JSON.parse(process.argv[2]) : null;
-  if (payload) {
-    await run((route, options) => fetch(payload.origin + route, options), payload.tokens);
-    return;
-  }
+async function runWorker() {
   const { load, context } = require('./runtime.cjs');
   const worker = load(path.join(root, 'cloudflare/src/index.ts'));
   const legacy = context(), database = context();
@@ -509,4 +583,12 @@ if (require.main === module) (async () => {
     await run((route, options) => worker.default.fetch(new Request('https://agentmesh.zahid.win' + route, options), env),
       { a: env.AGENT_A_TOKEN, b: env.AGENT_B_TOKEN, viewer: env.VIEWER_TOKEN });
   } finally { legacy.db.close(); database.db.close(); }
+}
+
+module.exports = { browser, parseDocument, idle, login, poll, findButton, click, set, postFrom, run, runWorker };
+
+if (require.main === module) (async () => {
+  const payload = process.argv[2] ? JSON.parse(process.argv[2]) : null;
+  if (payload) await run((route, options) => fetch(payload.origin + route, options), payload.tokens);
+  else await runWorker();
 })().catch(error => { console.error(error); process.exitCode = 1; });
