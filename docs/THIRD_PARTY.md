@@ -32,12 +32,12 @@ The generated dashboard pages in `server/src/agentmesh_server/` and `cloudflare/
 - `server/src/agentmesh_server/vendor/openhuddle/src/client/news.js` — verbatim news helper.
 - `server/src/agentmesh_server/vendor/openhuddle/src/client/tools.js` — verbatim team-tool definitions.
 - `server/src/agentmesh_server/vendor/openhuddle/src/client/wire.js` — verbatim wire-format helpers.
-- `server/src/agentmesh_server/vendor/openhuddle/src/hub/asks.js` — verbatim hub feature module.
+- `server/src/agentmesh_server/vendor/openhuddle/src/hub/asks.js` — adapted: AgentMesh permanent history retention (no automatic age/count/capacity pruning).
 - `server/src/agentmesh_server/vendor/openhuddle/src/hub/claims.js` — verbatim hub feature module.
 - `server/src/agentmesh_server/vendor/openhuddle/src/hub/db.js` — verbatim hub database helper.
 - `server/src/agentmesh_server/vendor/openhuddle/src/hub/errors.js` — verbatim hub error helpers.
-- `server/src/agentmesh_server/vendor/openhuddle/src/hub/hub.js` — verbatim hub core.
-- `server/src/agentmesh_server/vendor/openhuddle/src/hub/huddles.js` — verbatim hub feature module.
+- `server/src/agentmesh_server/vendor/openhuddle/src/hub/hub.js` — adapted: AgentMesh permanent history retention (events, asks and inactive teams are never swept).
+- `server/src/agentmesh_server/vendor/openhuddle/src/hub/huddles.js` — adapted: AgentMesh permanent history retention (no automatic age/count/capacity pruning).
 - `server/src/agentmesh_server/vendor/openhuddle/src/hub/pages/base.css` — adapted: AgentMesh palette and font variables.
 - `server/src/agentmesh_server/vendor/openhuddle/src/hub/pages/dashboard.css` — verbatim dashboard asset.
 - `server/src/agentmesh_server/vendor/openhuddle/src/hub/pages/dashboard.html` — verbatim dashboard asset.
@@ -48,7 +48,7 @@ The generated dashboard pages in `server/src/agentmesh_server/` and `cloudflare/
 - `server/src/agentmesh_server/vendor/openhuddle/src/hub/pages/mascot.svg` — verbatim dashboard asset.
 - `server/src/agentmesh_server/vendor/openhuddle/src/hub/pages/site.css` — verbatim dashboard asset.
 - `server/src/agentmesh_server/vendor/openhuddle/src/hub/pages/site.js` — verbatim dashboard asset.
-- `server/src/agentmesh_server/vendor/openhuddle/src/hub/prompt.js` — verbatim hub feature module.
+- `server/src/agentmesh_server/vendor/openhuddle/src/hub/prompt.js` — adapted: AgentMesh permanent history retention (no automatic age/count/capacity pruning).
 - `server/src/agentmesh_server/vendor/openhuddle/src/hub/server.js` — verbatim hub server.
 - `server/src/agentmesh_server/vendor/openhuddle/src/hub/tasks.js` — verbatim hub feature module.
 - `server/src/agentmesh_server/vendor/openhuddle/src/hub/text.js` — verbatim hub feature module.
@@ -96,14 +96,14 @@ The generated dashboard pages in `server/src/agentmesh_server/` and `cloudflare/
 - `cloudflare/src/openhuddle/do-sqlite.ts` — original storage adapter for Durable Object SQLite.
 - `cloudflare/src/openhuddle/hub-room.ts` — adapted: Worker Request/Response routing, SSE and Durable Object lifecycle.
 - `cloudflare/src/openhuddle/package.json` — vendored package manifest.
-- `cloudflare/src/openhuddle/src/hub/asks.js` — verbatim hub feature module.
+- `cloudflare/src/openhuddle/src/hub/asks.js` — adapted: AgentMesh permanent history retention (no automatic age/count/capacity pruning).
 - `cloudflare/src/openhuddle/src/hub/claims.js` — verbatim hub feature module.
 - `cloudflare/src/openhuddle/src/hub/db-do.js` — adapted: DO SQL adapter, schema-version table and transactionSync (PRAGMA user_version unsupported).
 - `cloudflare/src/openhuddle/src/hub/db.js` — verbatim hub database helper.
 - `cloudflare/src/openhuddle/src/hub/errors.js` — verbatim hub error helpers.
-- `cloudflare/src/openhuddle/src/hub/hub.js` — adapted: Durable Object transactionSync and no filesystem backups.
-- `cloudflare/src/openhuddle/src/hub/huddles.js` — verbatim hub feature module.
-- `cloudflare/src/openhuddle/src/hub/prompt.js` — verbatim hub feature module.
+- `cloudflare/src/openhuddle/src/hub/hub.js` — adapted: Durable Object transactionSync, no filesystem backups and AgentMesh permanent history retention (events, asks and inactive teams are never swept).
+- `cloudflare/src/openhuddle/src/hub/huddles.js` — adapted: AgentMesh permanent history retention (no automatic age/count/capacity pruning).
+- `cloudflare/src/openhuddle/src/hub/prompt.js` — adapted: AgentMesh permanent history retention (no automatic age/count/capacity pruning).
 - `cloudflare/src/openhuddle/src/hub/server.js` — verbatim hub server.
 - `cloudflare/src/openhuddle/src/hub/tasks.js` — verbatim hub feature module.
 - `cloudflare/src/openhuddle/src/hub/text.js` — verbatim hub feature module.
@@ -122,6 +122,8 @@ The generated dashboard pages in `server/src/agentmesh_server/` and `cloudflare/
 - `cloudflare/src/hub_join.html` — generated from the OpenHuddle join page and shared shell assets.
 
 ## Boundary exceptions and original adapters
+
+**AgentMesh permanent history retention** is a named domain adaptation shared by the Python-hosted and Worker hub copies. Events, asks (answered or not), prompt versions, closed huddles, their posts/votes and inactive teams are no longer automatically removed by age, row count or huddle-post capacity. The legacy `retentionDays` option no longer deletes teams. Live claim expiry and explicit member removal, task-plan replacement, claim release and owner-initiated team deletion remain unchanged; display/read limits and per-huddle write limits are unchanged. Upstream checksum manifests continue to identify the original source; modified files are marked as adapted rather than changing upstream hashes.
 
 The vendored hub layout and domain logic are preserved in their source assets. The unified `dashboard.html` copies the generated hub page's member, board, huddle, prompt, invite and feed behavior into the existing AgentMesh dashboard layout and theme. Original additions are question/claim controls over existing hub routes, member presence chips, session-safe dashboard integration and default-team-only read adapters. Other named adaptations remain Worker DO SQL/version/transaction/lifecycle routing and backup boundaries; client config.env/Cloudflare Access bootstrap; original token seed/reconciliation; and dashboard palette/font variables, sessionStorage namespace and nonce-CSP inlining. No upstream team-token, consume-once invite, dashboard membership-management or multi-team feature is invented.
 

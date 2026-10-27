@@ -1,4 +1,4 @@
-// Provenance: OpenHuddle 59105e5 src/hub/hub.js, MIT; verbatim
+// Provenance: OpenHuddle 59105e5 src/hub/hub.js, MIT; adapted: AgentMesh permanent history retention
 import { timingSafeEqual } from 'node:crypto';
 import { mkdirSync, readdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
@@ -42,8 +42,7 @@ function sameSecret(a, b) {
 }
 
 export class Hub {
-  constructor(db, { publicUrl = 'http://localhost:8787', now = Date.now, retentionDays = 90 } = {}) {
-    this.retentionDays = retentionDays;
+  constructor(db, { publicUrl = 'http://localhost:8787', now = Date.now } = {}) {
     this.db = db;
     this.publicUrl = publicUrl.replace(/\/+$/, '');
     this.now = now;
@@ -127,9 +126,6 @@ export class Hub {
       at,
     );
     const id = Number(res.lastInsertRowid);
-    if (id % 500 === 0) {
-      this.run('DELETE FROM events WHERE team_id = ? AND id <= ?', teamId, id - LIMITS.events_per_team);
-    }
     const ev = { id, team_id: teamId, kind, member_id: memberId ?? null, data, created_at: at };
     this.pending.push(ev);
     if (this.txDepth === 0) this.flush();
@@ -533,23 +529,10 @@ export class Hub {
     return { ok: true };
   }
 
-  // Housekeeping the server runs every few minutes: expired claims, week-old questions and
-  // month-old closed huddles go, and so do teams nobody has touched for retentionDays (0 keeps
-  // everything).
+  // Only live claims expire automatically; all team and conversation history is permanent.
   sweep() {
-    const now = this.now();
-    this.run('DELETE FROM claims WHERE expires_at < ?', now - 3600_000);
-    this.run('DELETE FROM asks WHERE created_at < ?', now - 7 * 24 * 3600_000);
+    this.run('DELETE FROM claims WHERE expires_at < ?', this.now() - 3600_000);
     huddles.sweep(this);
-    if (this.retentionDays > 0) {
-      const cutoff = now - this.retentionDays * 24 * 3600_000;
-      const stale = this.all(
-        'SELECT t.id FROM teams t WHERE t.created_at < ? AND NOT EXISTS (SELECT 1 FROM members m WHERE m.team_id = t.id AND m.last_seen >= ?)',
-        cutoff,
-        cutoff,
-      );
-      for (const { id } of stale) this.deleteTeam(id);
-    }
   }
 
   deleteTeam(teamId) {

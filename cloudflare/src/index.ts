@@ -506,15 +506,10 @@ export class Room extends DurableObject<Env> {
     else ws.send(JSON.stringify({ type: "info", message: "Push-only channel. Use the HTTP API to write." }));
   }
 
-  // Daily retention sweep so storage can't grow without bound.
+  // Only live file claims expire; conversation and coordination history is permanent.
   async alarm() {
     const now = Date.now();
-    this.sql("DELETE FROM events WHERE created_at < ?", now - 7 * DAY);
-    this.sql("DELETE FROM audit WHERE created_at < ?", now - 7 * DAY);
-    this.sql("DELETE FROM messages WHERE acked_at IS NOT NULL AND acked_at < ?", now - 30 * DAY);
-    this.sql("DELETE FROM patches WHERE created_at < ?", now - 30 * DAY);
-    this.sql("DELETE FROM tasks WHERE status IN ('accepted','cancelled') AND updated_at < ?", now - 90 * DAY);
-    this.coordination.sweep(now);
+    this.sql("DELETE FROM file_claims WHERE expires_at<=?", now);
     await this.ctx.storage.setAlarm(now + DAY);
   }
 }

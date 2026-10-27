@@ -124,19 +124,8 @@ class State:
     def sweep(self, now=None):
         now = now_ms() if now is None else now
         with self.lock:
-            removed = {}
-            for table, predicate, cutoff in (
-                ("events", "created_at < ?", now - 7 * DAY),
-                ("audit", "created_at < ?", now - 7 * DAY),
-                ("messages", "acked_at IS NOT NULL AND acked_at < ?", now - 30 * DAY),
-                ("patches", "created_at < ?", now - 30 * DAY),
-                ("tasks", "status IN ('accepted','cancelled') AND updated_at < ?", now - 90 * DAY),
-            ):
-                removed[table] = self.db.execute(
-                    f"DELETE FROM {table} WHERE {predicate}", (cutoff,)).rowcount
             from .coordination import sweep
-            removed.update(sweep(self.db, now))
-            return removed
+            return sweep(self.db, now)
 
     def _retention(self):
         while not self.stop.wait(DAY / 1000):
