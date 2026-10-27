@@ -49,7 +49,7 @@ function context(db = new DatabaseSync(':memory:')) {
       if (statement.columns().length) rows = statement.all(...args);
       else statement.run(...args);
     }
-    return { toArray: () => rows, one: () => {
+    return { [Symbol.iterator]: () => rows[Symbol.iterator](), toArray: () => rows, one: () => {
       assert.equal(rows.length, 1); return rows[0];
     // Deliberately inflate billing writes to simulate DO index/trigger accounting;
     // adapters must query SQLite changes(), never treat rowsWritten as that count.

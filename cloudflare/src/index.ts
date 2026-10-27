@@ -5,6 +5,7 @@ import hubJoin from "./hub_join.html";
 export { HubRoom } from "./openhuddle/hub-room";
 import type { HubRoom } from "./openhuddle/hub-room";
 import { Coordination, HttpError } from "./coordination";
+import { EXPORT_PAGE_LIMIT, exportTables, exportPage, validExportCursor } from "./openhuddle/export";
 
 interface Env {
   ROOM: DurableObjectNamespace<Room>;
@@ -13,6 +14,9 @@ interface Env {
   AGENT_A_TOKEN: string;
   AGENT_B_TOKEN: string;
   LIMITER?: RateLimit;
+  VIEWER_TOKEN?: string; // Retired credentials must never authorize an export.
+  ADMIN_EXPORT_TOKEN?: string;
+  ADMIN_EXPORT_LIMITER?: RateLimit;
 }
 type Agent = "agent-a" | "agent-b";
 const AGENTS: Agent[] = ["agent-a", "agent-b"];
@@ -61,6 +65,56 @@ async function identify(token: string, env: Env): Promise<Agent | null> {
   return null;
 }
 
+async function adminExport(request: Request, env: Env): Promise<Response> {
+  if (!env.ADMIN_EXPORT_LIMITER) return error("export rate limiter unavailable", 503);
+  const secret = env.ADMIN_EXPORT_TOKEN ?? "";
+  if (secret.length < 32 || secret.trim() !== secret) return error("owner export is not configured", 503);
+  const header = request.headers.get("authorization") ?? "";
+  const token = header.startsWith("Bearer ") ? header.slice(7).trim() : "";
+  const hash = await sha256(token);
+  const authorized = token.length >= 32 && crypto.subtle.timingSafeEqual(hash, await sha256(secret));
+  try {
+    const key = authorized ? "owner" : `ip:${request.headers.get("cf-connecting-ip") ?? "unknown"}`;
+    if (!(await env.ADMIN_EXPORT_LIMITER.limit({ key })).success) return error("rate limited", 429);
+  } catch { return error("export rate limiter unavailable", 503); }
+  if (!authorized || await identify(token, env)) return error("unauthorized", 401);
+  for (const viewer of (env.VIEWER_TOKEN ?? "").split(",").map(value => value.trim())) {
+    if (viewer && crypto.subtle.timingSafeEqual(hash, await sha256(viewer))) return error("unauthorized", 401);
+  }
+  const url = new URL(request.url);
+  if (request.method !== "GET") return error("method not allowed", 405);
+  if (url.pathname !== "/admin/export/tables" && url.pathname !== "/admin/export/page") return error("not found", 404);
+  try {
+    const hub = env.HUB.get(env.HUB.idFromName("openhuddle-hub"));
+    const hashHex = Array.from(new Uint8Array(hash), byte => byte.toString(16).padStart(2, "0")).join("");
+    // Even a misconfigured owner secret cannot elevate an existing hub member.
+    // Do not call hub.auth()/fetch(): those seed/reconcile or update presence.
+    if (await hub.exportTokenIsMember(hashHex)) return error("unauthorized", 401);
+    const room = env.ROOM.get(env.ROOM.idFromName("default-room"));
+    if (url.pathname === "/admin/export/tables") {
+      const [roomTables, hubTables] = await Promise.all([room.exportTables(), hub.exportTables()]);
+      return json({ tables: [
+        ...roomTables.map(table => ({ store: "room", ...table })),
+        ...hubTables.map(table => ({ store: "hub", ...table })),
+      ] });
+    }
+    const store = url.searchParams.get("store");
+    const table = url.searchParams.get("table") ?? "";
+    const after = url.searchParams.get("after");
+    const rawLimit = url.searchParams.get("limit") ?? "100";
+    if (store !== "room" && store !== "hub") return error("store must be room or hub");
+    if (!table || !validExportCursor(after)) return error("invalid table or after cursor");
+    if (!/^\d+$/.test(rawLimit) || !Number.isSafeInteger(Number(rawLimit)) || Number(rawLimit) < 1)
+      return error("limit must be a positive integer");
+    const limit = Math.min(Number(rawLimit), EXPORT_PAGE_LIMIT);
+    const page = store === "room" ? await room.exportPage(table, after, limit) : await hub.exportPage(table, after, limit);
+    if ("error" in page) return error(page.error, page.status);
+    return json({ store, table, ...page });
+  } catch (err) {
+    return error("export failed", 500);
+  }
+}
+
 // Legacy data belongs only to the seeded default team. Resolve that identity
 // through the existing hub API, never by the editable/non-unique team name.
 async function legacyAdapter(request: Request, env: Env, ip: string): Promise<Response> {
@@ -106,6 +160,7 @@ async function legacyAdapter(request: Request, env: Env, ip: string): Promise<Re
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
+    if (url.pathname === "/admin/export" || url.pathname.startsWith("/admin/export/")) return adminExport(request, env);
     // Hub member tokens live in the hub DB, not the legacy environment identify gate.
     const hubRoute = url.pathname.startsWith("/api/") || url.pathname.startsWith("/t/") || url.pathname.startsWith("/join/") || url.pathname === "/robots.txt";
     if (hubRoute) {
@@ -175,11 +230,18 @@ export default {
 
 export class Room extends DurableObject<Env> {
   private waiters = new Set<() => void>();
-  private coordination: Coordination;
+  private coordination!: Coordination;
   private deferredPushes: Array<() => void> | null = null;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
+  }
+
+  // Export RPCs must not create/migrate data or schedule alarms on cold starts.
+  // Normal application traffic retains the existing initialization lifecycle.
+  private initialize() {
+    if (this.coordination) return;
+    const ctx = this.ctx;
     ctx.storage.sql.exec(`
       CREATE TABLE IF NOT EXISTS tasks (
         id TEXT PRIMARY KEY, title TEXT NOT NULL, description TEXT NOT NULL,
@@ -214,6 +276,11 @@ export class Room extends DurableObject<Env> {
   }
 
   private sql(query: string, ...args: unknown[]) { return this.ctx.storage.sql.exec(query, ...args); }
+
+  exportTables() { return exportTables(this.ctx.storage.sql); }
+  exportPage(table: string, after: string | null, limit: number) {
+    return exportPage(this.ctx.storage.sql, table, after, limit);
+  }
 
   private atomic<T>(callback: () => T): T {
     const pushes: Array<() => void> = [];
@@ -257,6 +324,7 @@ export class Room extends DurableObject<Env> {
   }
 
   async fetch(request: Request): Promise<Response> {
+    this.initialize();
     const url = new URL(request.url);
     const path = url.pathname.replace(/\/+$/, "") || "/";
     const method = request.method.toUpperCase();
@@ -508,6 +576,7 @@ export class Room extends DurableObject<Env> {
 
   // Daily retention sweep so storage can't grow without bound.
   async alarm() {
+    this.initialize();
     const now = Date.now();
     this.sql("DELETE FROM events WHERE created_at < ?", now - 7 * DAY);
     this.sql("DELETE FROM audit WHERE created_at < ?", now - 7 * DAY);

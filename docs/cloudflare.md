@@ -66,4 +66,17 @@ Use `scripts/e2e_test.py` against the deployed API with both member tokens suppl
 
 Clients need Node.js20+; the local Python host (if used instead) needs22.13+. `agentmesh-mcp` exposes `team_sync`, `team_post`, `team_ask`, `team_reply`, `huddle`, `master_prompt`, `plan`, `task`, `claim`, `team_settings`; the README maps old tool names. `agentmesh-mcp-legacy` keeps the previous tools, notify and automatic-response flow. The personal team dashboard is `/t/<team-id>#k=<token>`; membership create/join/remove/delete uses CLI/API only, not dashboard controls or a multi-team switcher. Open the dashboard hostname's root and enter a member key or legacy agent token; no access-mode choice or team ID is required. A typed legacy agent token uses its authenticated `/v1` snapshot and writes as that agent; other keys use `/api/state` to discover their team and write as that member. Personal `/t/<team-id>#k=<member-key>` links retain member access, even for seeded keys that also authenticate as legacy agents. `/viewer` and `/index.html` redirect to `/`, and the former viewer identity cannot authenticate. Non-`vc_` seeded tokens cannot generate upstream dash links and are not recognized by its token scrubber; keep them private. The one page hosts all team panels and default-team-only legacy transcript/audit/patch panels; see [Unified dashboard](unified-dashboard.md) for presence, session handling and adapter isolation.
 
-The Worker serves generated nonce-CSP pages directly; no static-asset deployment or new dependency is needed. The DO SQL boundary uses a schema-version table because `PRAGMA user_version` is unsupported, `transactionSync` instead of BEGIN/COMMIT, and no filesystem backup. Do not call the live AgentMesh API during automated verification; use the offline Worker suite, loopback e2e and deployment dry-run only.
+The Worker serves generated nonce-CSP pages directly; no static-asset deployment or new dependency is needed. The DO SQL boundary uses a schema-version table because `PRAGMA user_version` is unsupported, `transactionSync` instead of BEGIN/COMMIT, and no filesystem backup inside the Worker. Do not call the live AgentMesh API during automated verification; use the offline Worker suite, loopback e2e and deployment dry-run only.
+
+## Daily owner backups
+
+[Daily Worker backups to your PC](backups.md) documents the read-only
+`/admin/export/tables` and `/admin/export/page` endpoints, a page-by-page Python
+backup with count/SHA-256 verification, and a daily systemd user timer that keeps
+every run forever. This optional facility needs a separate `ADMIN_EXPORT_TOKEN`
+(at least 32 characters, never an agent/viewer/member key) and the dedicated
+`ADMIN_EXPORT_LIMITER` binding included in Wrangler configuration. Missing rate
+limiting fails closed with `503`; ordinary clients and their tokens are unchanged.
+No deployment, live export, token provisioning or timer installation is performed
+by the implementation's offline checks. Live retention rules above still apply;
+backups cannot recover data already deleted before the first run.

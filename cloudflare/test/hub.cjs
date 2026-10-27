@@ -53,6 +53,7 @@ const get = (route, token = env.AGENT_A_TOKEN, status = 200) => call('GET', rout
 const post = (route, body, token, status = 200) => call('POST', route, body, token, status);
 async function drain(reader) { let text = ''; while (true) { const r = await reader.read(); if (r.done) return text; text += new TextDecoder().decode(r.value); } }
 (async () => {
+  await require('./export.cjs')();
   await testSignin(worker, env);
   await require('./unified_routes.cjs')();
   let state = await get('/api/state');

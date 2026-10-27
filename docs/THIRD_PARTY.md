@@ -94,7 +94,8 @@ The generated dashboard pages in `server/src/agentmesh_server/` and `cloudflare/
 - `cloudflare/src/openhuddle/UPSTREAM.sha256` — generated checksum manifest for the port.
 - `cloudflare/src/openhuddle/agentmesh-seed.js` — original AgentMesh seed adapter shared with the other ports.
 - `cloudflare/src/openhuddle/do-sqlite.ts` — original storage adapter for Durable Object SQLite.
-- `cloudflare/src/openhuddle/hub-room.ts` — adapted: Worker Request/Response routing, SSE and Durable Object lifecycle.
+- `cloudflare/src/openhuddle/export.ts` — original bounded, read-only SQLite export helper.
+- `cloudflare/src/openhuddle/hub-room.ts` — adapted: Worker Request/Response routing, SSE, Durable Object lifecycle and read-only owner export RPC.
 - `cloudflare/src/openhuddle/package.json` — vendored package manifest.
 - `cloudflare/src/openhuddle/src/hub/asks.js` — verbatim hub feature module.
 - `cloudflare/src/openhuddle/src/hub/claims.js` — verbatim hub feature module.
@@ -129,6 +130,7 @@ Original AgentMesh integration (not copied from upstream):
 - `client/src/agentmesh_mcp/vendor/openhuddle/agentmesh-client-boot.js` — Python shim's Node entry point.
 - `client/src/agentmesh_mcp/vendor/openhuddle/src/client/agentmesh-boundary.js` — config.env loader, origin-scoped Access fetch wrapper and upstream saveConfig/findProject bootstrap, also reached by the adapted installed bin.
 - `cloudflare/src/openhuddle/do-sqlite.ts` — Durable Object SQL compatibility adapter.
+- `cloudflare/src/openhuddle/export.ts` — shared, read-only owner export paging over both Durable Object stores.
 
 The generated pages listed above derive from upstream `src/hub/pages/dashboard.html`, `dashboard.js`, `dashboard.css`, `base.css`, `join.html`, `site.css`, `site.js`, `favicon.svg` and `mascot.svg`. The unified AgentMesh `server/src/agentmesh_server/dashboard.html` and `cloudflare/src/dashboard.html` remain adapted derivatives of those dashboard sources, with authenticated agent `/v1` controls alongside copied member `/api` behavior; the former viewer identity and separate access-mode selector have been removed. See [unified-dashboard.md](unified-dashboard.md) for the integration boundaries.
 
