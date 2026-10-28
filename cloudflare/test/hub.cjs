@@ -34,7 +34,10 @@ let hub = new worker.HubRoom(database.ctx, env);
 const limiterKeys = [];
 env.LIMITER = { limit: async ({ key }) => { limiterKeys.push(key); return { success: true }; } };
 env.ROOM = { idFromName: name => name, get: () => ({ fetch: request => room.fetch(request) }) };
-env.HUB = { idFromName: name => { assert.equal(name, 'openhuddle-hub'); return name; }, get: () => ({ fetch: request => hub.fetch(request) }) };
+env.HUB = { idFromName: name => { assert.equal(name, 'openhuddle-hub'); return name; }, get: () => ({
+  fetch: request => hub.fetch(request), teamTranscript: teamId => hub.teamTranscript(teamId),
+  legacyTeamId: () => hub.legacyTeamId(),
+}) };
 async function response(method, route, body, token, extras = {}) {
   const headers = { 'cf-connecting-ip': '127.0.0.1', ...extras };
   if (token) headers.authorization = 'Bearer ' + token;

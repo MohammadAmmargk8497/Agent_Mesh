@@ -22,6 +22,7 @@ from . import coordination
 from .config import load_config
 from .hub import HubSupervisor, HubUnavailable
 from .state import AGENTS, MAX_WAIT_S, MAX_WAITERS_PER_AGENT, State, now_ms
+from .transcript import hub_messages, merge_messages
 
 MAX_BODY = 256 * 1024
 MAX_PATCH = 200 * 1024
@@ -336,7 +337,7 @@ class Handler(BaseHTTPRequestHandler):
             connection.close()
 
     def _legacy_adapter(self, url):
-        """Legacy snapshots for authenticated default-team members."""
+        """Team transcripts and default-team legacy panels for members."""
         path = url.path[len("/api/legacy"):]
         if self.command != "GET":
             raise HttpError(405, "method not allowed")
@@ -368,17 +369,21 @@ class Handler(BaseHTTPRequestHandler):
         # authenticating as an agent (which would falsely refresh that agent's presence).
         try:
             with closing(sqlite3.connect(hub._database_path().as_uri() + "?mode=ro", uri=True)) as database:
+                database.execute("BEGIN")
                 seeded = database.execute("SELECT team_id FROM agentmesh_seed LIMIT 1").fetchone()
+                messages = hub_messages(database, team) if path == "/transcript" else []
         except (OSError, ValueError, sqlite3.Error):
             raise HubUnavailable("hub unavailable") from None
-        if not seeded or team != seeded[0]:
+        default_team = bool(seeded and team == seeded[0])
+        if not default_team and path != "/transcript":
             raise HttpError(403, "legacy panels are available only for the default team")
         state = self.server.state
         if state is None or state.stop.is_set():
             raise HttpError(503, "server shutting down")
         with state.condition:
             if path == "/transcript":
-                data, status = self._snapshot(state, query)
+                data, status = self._snapshot(state, query, include_legacy=default_team)
+                data["messages"] = merge_messages(data["messages"], messages)
             else:
                 data, status = self._route(state, "agent-a", "/v1" + path, query)
         self._json(data, status)
@@ -472,7 +477,7 @@ class Handler(BaseHTTPRequestHandler):
     do_HEAD = _handle
     do_OPTIONS = _handle
 
-    def _snapshot(self, state, query, agent=None):
+    def _snapshot(self, state, query, agent=None, *, include_legacy=True):
         """Build a member-authorized transcript or an agent-scoped dashboard."""
         now = now_ms()
         rows = state.rows
@@ -484,13 +489,18 @@ class Handler(BaseHTTPRequestHandler):
         if not math.isfinite(after_number) or abs(after_number) > 2**53 - 1:
             raise HttpError(400, "after must be an integer")
         after = int(after_number)
+        if not include_legacy:
+            # Team-created rooms must not read any part of the default room.
+            return {"messages": [], "tasks": [], "patches": [], "audit": [], "events": [],
+                    "last_event_id": 0, "master_prompt": None, "huddles": [], "claims": [],
+                    "questions": [], "news": [], "feed_details": {}, "member_settings": []}, 200
         events = rows("SELECT * FROM events WHERE id>?" + (" AND recipient=?" if scoped else "") + " ORDER BY id ASC LIMIT 200", after, *((agent,) if scoped else ()))
         tasks = [_task_dict(row, state) for row in rows("SELECT * FROM tasks" + (" WHERE created_by=? OR assignee=? OR (status='open' AND id IN (SELECT task_id FROM dashboard_tasks WHERE state='open'))" if scoped else "") + " ORDER BY created_at DESC LIMIT 200", *((agent, agent) if scoped else ()))[::-1]]
         if scoped:
             for task in tasks:
                 task["dashboard_status"] = coordination.dashboard_status(state, task)
         return {
-            "messages": rows("SELECT * FROM messages" + (" WHERE sender=? OR recipient=?" if scoped else "") + " ORDER BY created_at DESC LIMIT 500", *((agent, agent) if scoped else ()))[::-1],
+            "messages": rows("SELECT * FROM messages" + (" WHERE sender=? OR recipient=?" if scoped else "") + " ORDER BY created_at DESC,rowid DESC LIMIT 500", *((agent, agent) if scoped else ()))[::-1],
             "tasks": tasks,
             "patches": rows("SELECT id,sender,title,task_id,created_at,length(text) AS size FROM patches ORDER BY created_at DESC LIMIT 50")[::-1],
             "audit": rows("SELECT * FROM audit" + (" WHERE actor=?" if scoped else "") + " ORDER BY id DESC LIMIT 200", *((agent,) if scoped else ()))[::-1],
@@ -498,6 +508,8 @@ class Handler(BaseHTTPRequestHandler):
             "last_event_id": events[-1]["id"] if events else after,
             **coordination.snapshot(state, now, agent=agent),
             **({"me": agent} if scoped else {}),
+            **({"team_transcript": True} if scoped and getattr(
+                getattr(self.server, "hub", None), "enabled", False) else {}),
         }, 200
 
     def _route(self, state, agent, path, query):

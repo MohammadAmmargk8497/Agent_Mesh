@@ -613,7 +613,10 @@
           heading.append(element("span", "meta", "→ " + row.recipient + " · " + timestamp(row.created_at)));
           card.append(heading, element("p", "", row.text));
           if (row.task_id) card.append(element("div", "meta", "Task " + row.task_id));
-          card.append(element("div", "meta", "Message " + row.id + " · " + (row.acked_at ? "Acknowledged " + timestamp(row.acked_at) : "Unacknowledged")));
+          const kind = row.kind || "direct";
+          const reference = row.ask_id || row.huddle_id || row.id;
+          const acknowledgement = kind === "direct" ? " · " + (row.acked_at ? "Acknowledged " + timestamp(row.acked_at) : "Unacknowledged") : "";
+          card.append(element("div", "meta", kind + " · " + reference + acknowledgement));
           fragment.append(card);
         }
         container.replaceChildren(fragment);
@@ -1206,6 +1209,29 @@
           const data = await response.json();
           if (session !== currentSession || controller !== requestController) return;
           if (![data.messages, data.tasks, data.patches, data.audit, data.events].every(Array.isArray) || !Number.isSafeInteger(data.last_event_id)) throw new Error("Invalid snapshot");
+          // The transcript is a human-facing team read, even beside agent controls.
+          // Standalone legacy servers can omit this capability and keep their snapshot.
+          if (data.team_transcript) {
+            try {
+              const options = { headers: { Authorization: "Bearer " + key }, cache: "no-store", signal: requestController.signal };
+              const memberResponse = await fetch("/api/state", options);
+              if (session !== currentSession || controller !== requestController) return;
+              if (memberResponse.ok) {
+                const member = await memberResponse.json();
+                if (session !== currentSession || controller !== requestController) return;
+                if (member.team?.id) {
+                  const transcriptResponse = await fetch("/api/legacy/transcript?team=" + encodeURIComponent(member.team.id), options);
+                  if (transcriptResponse.ok) {
+                    const transcript = await transcriptResponse.json();
+                    if (Array.isArray(transcript.messages)) data.messages = transcript.messages;
+                  }
+                }
+              }
+            } catch {
+              // Keep legacy controls usable if the separately authenticated hub is unavailable.
+            }
+            if (session !== currentSession || controller !== requestController) return;
+          }
           // Defaults keep this dashboard usable with older server snapshots.
           data.master_prompt = data.master_prompt || {};
           for (const name of ["huddles", "claims", "questions", "news"]) if (!Array.isArray(data[name])) data[name] = [];
@@ -2105,7 +2131,7 @@
             for (const name of ["messages", "patches", "audit"]) delete rendered[name];
             for (const id of ["message-count", "patch-count", "audit-count"]) get(id).textContent = "0";
             for (const id of ["messages", "patches", "audit"]) {
-              clear($("#" + id)).append(h("p", { class: "empty", text: "Legacy adapter unavailable. These panels are available only to the default team." }));
+              clear($("#" + id)).append(h("p", { class: "empty", text: id === "messages" ? "Team transcript unavailable. Retrying on the next refresh." : "Legacy adapter unavailable. These panels are available only to the default team." }));
             }
           }
         }
