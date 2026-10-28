@@ -176,8 +176,8 @@ async function adminExport(request: Request, env: Env): Promise<Response> {
   }
 }
 
-// Legacy data belongs only to the seeded default team. Resolve that identity
-// through the existing hub API, never by the editable/non-unique team name.
+// Legacy data belongs only to the seeded default team; hub transcript entries
+// belong to every member's own team. Never bind legacy data by editable names.
 async function legacyAdapter(request: Request, env: Env, ip: string): Promise<Response> {
   const url = new URL(request.url);
   const path = url.pathname.slice("/api/legacy".length);
@@ -196,25 +196,42 @@ async function legacyAdapter(request: Request, env: Env, ip: string): Promise<Re
   if (!team || team !== state.team?.id) return error("team does not match member key", 403);
   let defaultTeam = legacyTeams.get(env);
   if (!defaultTeam) {
-    const agent = await identify(token, env);
-    if ((agent === "agent-a" || agent === "agent-b") && state.me?.name === agent) defaultTeam = state.team.id;
-    else {
-      for (const [name, secret] of [["agent-a", env.AGENT_A_TOKEN], ["agent-b", env.AGENT_B_TOKEN]]) {
-        const seeded = await stateFor(secret.split(",")[0].trim());
-        if (!seeded.ok) { await seeded.body?.cancel(); continue; }
-        const seededState = await seeded.json() as any;
-        if (seededState.me?.name === name) { defaultTeam = seededState.team?.id; break; }
-      }
-    }
+    // Read immutable seed metadata; authenticating as seeded agents would
+    // falsely refresh their presence when a generated member opens this panel.
+    defaultTeam = (await hub.legacyTeamId()) ?? undefined;
     if (defaultTeam) legacyTeams.set(env, defaultTeam);
   }
+  if (path === "/transcript") {
+    const rawAfter = url.searchParams.get("after");
+    const after = Number(rawAfter ?? 0);
+    if ((rawAfter !== null && !/^-?\d+$/.test(rawAfter)) || !Number.isSafeInteger(after))
+      return error("after must be an integer");
+    const hubMessages = await hub.teamTranscript(team);
+    let snapshot: any = { messages: [], tasks: [], patches: [], audit: [], events: [], last_event_id: 0 };
+    if (defaultTeam && team === defaultTeam) {
+      const legacyUrl = new URL("/internal/transcript", url.origin);
+      if (url.searchParams.has("after")) legacyUrl.searchParams.set("after", url.searchParams.get("after")!);
+      const legacyResponse = await env.ROOM.get(env.ROOM.idFromName("default-room")).fetch(new Request(legacyUrl, {
+        headers: { "x-agentmesh-agent": "legacy-adapter" },
+      }));
+      if (!legacyResponse.ok) return legacyResponse;
+      snapshot = await legacyResponse.json();
+    }
+    // Both sources retain their own chronological tie ordering; legacy rows
+    // precede hub rows at an identical timestamp. Keep only the newest 500.
+    snapshot.messages = [
+      ...snapshot.messages.map((message: any) => ({ ...message, kind: "direct" })),
+      ...hubMessages,
+    ].sort((a, b) => a.created_at - b.created_at).slice(-500);
+    return json(snapshot);
+  }
   if (!defaultTeam || team !== defaultTeam) return error("legacy panels are available only for the default team", 403);
-  const legacyUrl = new URL(path === "/transcript" ? "/internal/transcript" : "/v1" + path, url.origin);
+  const legacyUrl = new URL("/v1" + path, url.origin);
   if (url.searchParams.has("after")) legacyUrl.searchParams.set("after", url.searchParams.get("after")!);
   // Only this fixed GET allowlist can enter the legacy room; caller-supplied
   // identity headers and hub credentials are never forwarded to it.
   return env.ROOM.get(env.ROOM.idFromName("default-room")).fetch(new Request(legacyUrl, {
-    headers: { "x-agentmesh-agent": path === "/transcript" ? "legacy-adapter" : "agent-a" },
+    headers: { "x-agentmesh-agent": "agent-a" },
   }));
 }
 
@@ -422,8 +439,8 @@ export class Room extends DurableObject<Env> {
         const snapshot = this.coordination.snapshot(Date.now(), legacySnapshot ? undefined : agent as Agent);
         return json({
           messages: (dashboardState
-            ? this.sql("SELECT * FROM messages WHERE sender=? OR recipient=? ORDER BY created_at DESC LIMIT 500", agent, agent)
-            : this.sql("SELECT * FROM messages ORDER BY created_at DESC LIMIT 500")).toArray().reverse(),
+            ? this.sql("SELECT * FROM messages WHERE sender=? OR recipient=? ORDER BY created_at DESC, rowid DESC LIMIT 500", agent, agent)
+            : this.sql("SELECT * FROM messages ORDER BY created_at DESC, rowid DESC LIMIT 500")).toArray().reverse(),
           tasks,
           patches: this.sql("SELECT id, sender, title, task_id, created_at, length(text) AS size FROM patches ORDER BY created_at DESC LIMIT 50").toArray().reverse(),
           audit: (dashboardState
@@ -433,6 +450,7 @@ export class Room extends DurableObject<Env> {
           last_event_id: events.length ? events[events.length - 1].id : after,
           ...snapshot,
           ...(dashboardState ? { me: agent } : {}),
+          ...(dashboardState && this.env.HUB ? { team_transcript: true } : {}),
         });
       }
       if (agent === "legacy-adapter" || !AGENTS.includes(agent)) return error("invalid agent context", 401);

@@ -236,6 +236,7 @@ async function run(request, tokens) {
     const data = await response.json(); assert.equal(response.status, 200, route + ': ' + JSON.stringify(data)); return data;
   }
   const initial = await api('/api/state'); input.team = initial.team.id;
+  await runTranscript(input, request, api, tokens);
   await runSessions(input, request, tokens, html);
   const empty = browser(input, request); await idle(empty);
   assert.equal(empty.calls.length, 0, 'no authenticated requests before a key is supplied');
@@ -285,7 +286,8 @@ async function run(request, tokens) {
   const agent = browser(input, request, { pathname: '/' }); await login(agent, tokens.a);
   assert.match(agent.get('connection-status').textContent, /agent-a/, 'typed legacy token selects its agent identity');
   assert.ok(agent.calls.some(call => call.url === '/v1/dashboard/state?after=0' && call.status === 200));
-  assert.ok(!agent.calls.some(call => call.url.startsWith('/api/')), 'legacy agent session does not mix team credentials');
+  assert.ok(agent.calls.some(call => call.url.startsWith('/api/legacy/transcript?') && call.status === 200), 'agent controls use the separately member-authorized team transcript');
+  assert.ok(agent.calls.filter(call => call.url.startsWith('/api/')).every(call => (call.options.method || 'GET') === 'GET'), 'agent controls only read the member transcript and never mutate through member routes');
   assert.deepEqual(JSON.parse(agent.sessionStorage.get('agentmesh:session')), { key: tokens.a, mode: 'auto' }, 'typed agent token is remembered with its detection mode');
   assert.ok(![...agent.storage.values()].some(value => value.includes(tokens.a)), 'legacy agent credential is never saved in localStorage');
   for (const enabled of [false, true]) {
@@ -337,15 +339,18 @@ async function run(request, tokens) {
 
   // A separate team must never receive the default team's transcript/audit/patches.
   const created = await api('/api/teams', { team_name: 'Isolated test team', member_name: 'Isolated owner' });
+  await api('/api/post', { kind: 'update', text: 'Isolated team transcript post' }, created.token);
   const isolated = browser({ ...input, team: created.team_id }, request);
   await login(isolated, created.token);
-  assert.equal(isolated.get('auth').hidden, true, 'a denied legacy adapter does not reject a valid hub member');
+  assert.equal(isolated.get('auth').hidden, true, 'a valid member can read their own team transcript');
+  assert.ok(isolated.get('messages').textContent.includes('Isolated team transcript post'), 'other teams get their own hub messages');
+  assert.ok(!isolated.get('messages').textContent.includes('Transcript ask for the humans'), 'another team cannot see the default team ask');
   assert.ok(isolated.get('members').textContent.includes('Isolated owner'));
   assert.ok(!isolated.get('members').textContent.includes('agent-a'), 'presence is scoped to the caller team');
   for (const id of ['messages', 'audit', 'patches']) assert.ok(!isolated.get(id).textContent.includes('agent-a'), id + ' does not leak default-team data');
   const isolatedAdapters = isolated.calls.filter(call => call.url.startsWith('/api/legacy/'));
   assert.equal(isolatedAdapters.length, 1, 'other-team legacy panels use the scoped adapter rather than direct /v1 data');
-  assert.ok(isolatedAdapters.every(call => call.status === 403 && new URL(call.url, 'https://example').searchParams.get('team') === created.team_id));
+  assert.ok(isolatedAdapters.every(call => call.status === 200 && new URL(call.url, 'https://example').searchParams.get('team') === created.team_id));
   const typedMember = browser(input, request, { pathname: '/' }); await login(typedMember, created.token);
   assert.ok(typedMember.calls.some(call => call.url.startsWith('/v1/dashboard/state') && call.status === 401), 'member key is not accepted as a legacy agent token');
   assert.ok(typedMember.calls.some(call => call.url === '/api/state' && call.status === 200), 'typed member key opens its own team workspace');
@@ -406,7 +411,10 @@ async function runSessions(input, request, tokens, html) {
     assert.equal(reload.calls[0].url, mode === 'member' ? '/api/state' : '/v1/dashboard/state?after=0', 'reload honors the saved ' + mode + ' mode');
     for (const call of reload.calls) assert.equal(call.options.headers.Authorization, 'Bearer ' + tokens.a);
     if (mode === 'member') assert.ok(reload.calls.every(call => !call.url.startsWith('/v1/')));
-    else assert.ok(reload.calls.every(call => !call.url.startsWith('/api/')));
+    else {
+      assert.ok(reload.calls.some(call => call.url.startsWith('/api/legacy/transcript?') && call.status === 200), 'restored agent session reads the member-authorized transcript');
+      assert.ok(reload.calls.filter(call => call.url.startsWith('/api/')).every(call => call.url === '/api/state' || call.url.startsWith('/api/legacy/transcript?')), 'agent sessions use member routes only for the human transcript');
+    }
     assertSession(reload, tokens.a, mode);
 
     await reload.get('sign-out').click(); await idle(reload);
@@ -441,6 +449,56 @@ async function runSessions(input, request, tokens, html) {
     const reload = browser(input, request, { pathname: '/', sessionStorage: rejected.sessionStorage }); await idle(reload);
     assert.equal(reload.calls.length, 0, 'rejected credential is not retried on reload');
     assert.equal(reload.get('auth').hidden, false);
+  }
+}
+
+async function runTranscript(input, request, api, tokens) {
+  const texts = [
+    'Transcript direct for the humans <img src=x onerror=alert(1)>',
+    'Transcript ask for the humans',
+    'Transcript answer for the humans',
+    'Transcript team post for the humans',
+    'Transcript huddle idea for the humans',
+    'Transcript huddle comment <script>bad()</script> ' + 'Complete text. '.repeat(50).trimEnd(),
+  ];
+  const direct = await request('/v1/messages', {
+    method: 'POST', headers: { Authorization: 'Bearer ' + tokens.a, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ to: 'agent-b', text: texts[0] }),
+  });
+  assert.equal(direct.status, 201);
+  await flush();
+  const ask = await api('/api/ask', { to: 'agent-b', question: texts[1], wait_s: 0 });
+  await flush();
+  await api('/api/reply', { ask_id: ask.ask_id, answer: texts[2] }, tokens.b);
+  await flush();
+  await api('/api/post', { kind: 'update', text: texts[3] });
+  const talk = await api('/api/huddle/start', { kind: 'brainstorm', topic: 'Transcript regression huddle' });
+  await flush();
+  await api('/api/huddle/post', { id: talk.huddle.id, kind: 'idea', text: texts[4] });
+  await flush();
+  await api('/api/huddle/post', { id: talk.huddle.id, kind: 'comment', text: texts[5] }, tokens.b);
+  for (const mode of ['member', 'agent']) {
+    const app = browser(input, request, mode === 'member' ? { hash: '#k=' + encodeURIComponent(tokens.a) } : { pathname: '/' });
+    if (mode === 'agent') await login(app, tokens.a); else await idle(app);
+    const panel = app.get('messages'), cards = panel.querySelectorAll('article');
+    const source = app.calls.find(call => call.url.startsWith('/api/legacy/transcript?') && call.status === 200).payload.messages;
+    const entries = texts.map(text => cards.find(card => card.textContent.includes(text)));
+    assert.ok(entries.every(Boolean), mode + ' transcript renders every full message text');
+    assert.deepEqual(entries.map(card => cards.indexOf(card)), entries.map(card => cards.indexOf(card)).sort((a, b) => a - b), mode + ' transcript is chronological');
+    for (const [index, kind] of ['direct', 'ask', 'answer', 'huddle post', 'huddle post', 'huddle comment'].entries()) {
+      assert.ok(entries[index].textContent.includes(kind + ' · '), mode + ' shows message kind ' + kind);
+      assert.ok(entries[index].textContent.includes(new Date(source.find(row => row.text === texts[index]).created_at).toLocaleString()), mode + ' shows message time');
+      assert.ok(entries[index].textContent.includes(index === 2 || index === 5 ? 'agent-b' : 'agent-a'), mode + ' shows sender');
+      assert.ok(entries[index].textContent.includes('→ ' + (index < 2 ? 'agent-b' : index === 2 ? 'agent-a' : 'team')), mode + ' shows recipient');
+      if (index) assert.ok(!entries[index].textContent.includes('Unacknowledged'), 'only direct messages have acknowledgement state');
+    }
+    for (const index of [1, 2]) assert.ok(entries[index].textContent.includes(ask.ask_id), 'question id is visible');
+    for (const index of [4, 5]) assert.ok(entries[index].textContent.includes(talk.huddle.id), 'huddle id is visible');
+    assert.equal(panel.querySelectorAll('img').length, 0, 'message markup stays literal text');
+    assert.equal(panel.querySelectorAll('script').length, 0, 'huddle markup stays literal text');
+    assert.equal(Number(app.get('message-count').textContent), cards.length);
+    await app.get('sign-out').click(); await idle(app);
+    assert.equal(panel.textContent, '', 'sign-out clears the merged transcript');
   }
 }
 
@@ -578,7 +636,9 @@ async function runWorker() {
   const env = { AGENT_A_TOKEN: 'a'.repeat(40), AGENT_B_TOKEN: 'b'.repeat(40), VIEWER_TOKEN: 'v'.repeat(40) };
   const room = new worker.Room(legacy.ctx, env), hub = new worker.HubRoom(database.ctx, env);
   env.ROOM = { idFromName: name => name, get: () => ({ fetch: req => room.fetch(req) }) };
-  env.HUB = { idFromName: name => name, get: () => ({ fetch: req => hub.fetch(req) }) };
+  env.HUB = { idFromName: name => name, get: () => ({
+    fetch: req => hub.fetch(req), teamTranscript: teamId => hub.teamTranscript(teamId), legacyTeamId: () => hub.legacyTeamId(),
+  }) };
   try {
     await run((route, options) => worker.default.fetch(new Request('https://agentmesh.zahid.win' + route, options), env),
       { a: env.AGENT_A_TOKEN, b: env.AGENT_B_TOKEN, viewer: env.VIEWER_TOKEN });

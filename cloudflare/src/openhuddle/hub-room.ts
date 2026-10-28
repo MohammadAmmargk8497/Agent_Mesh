@@ -10,6 +10,7 @@ import { seedHub } from "./agentmesh-seed.js";
 import { exportTables, exportPage } from "./export";
 import { AdminRecovery } from "./admin-recovery";
 import { HttpError } from "../coordination";
+import { teamTranscript } from "./transcript";
 
 interface HubEnv { AGENT_A_TOKEN: string; AGENT_B_TOKEN: string; }
 const PING_MS = 25_000;
@@ -117,6 +118,19 @@ export class HubRoom extends DurableObject<HubEnv> {
   exportPage(table: string, after: string | null, limit: number) {
     this.ownerRecovery.assertReady();
     return exportPage(this.ctx.storage.sql, table, after, limit);
+  }
+
+  // Internal RPC only. The Worker authenticates membership and checks the
+  // requested team with /api/state before requesting this read-only projection.
+  legacyTeamId(): string | null {
+    this.ownerRecovery.assertReady();
+    const rows = this.ctx.storage.sql.exec<{ team_id: string }>("SELECT team_id FROM agentmesh_seed LIMIT 1").toArray();
+    return rows[0]?.team_id ?? null;
+  }
+
+  teamTranscript(teamId: string) {
+    this.ownerRecovery.assertReady();
+    return teamTranscript(this.ctx.storage.sql, teamId);
   }
 
   async alarm() {
