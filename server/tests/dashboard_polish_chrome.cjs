@@ -80,12 +80,20 @@ async function main(settings) {
   async function click(id) {
     await cdp.evaluate(`document.getElementById(${literal(id)}).click()`);
   }
+  async function mouseClick(x, y) {
+    await cdp.call('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y, button: 'none' });
+    await cdp.call('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', clickCount: 1 });
+    await cdp.call('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', clickCount: 1 });
+  }
   async function set(id, value, event = 'input') {
     await cdp.evaluate(`(() => { const field = document.getElementById(${literal(id)}); field.value = ${literal(value)}; field.dispatchEvent(new Event(${literal(event)}, {bubbles:true})); })()`);
   }
   async function key(key, code = 'Key' + key.toUpperCase(), modifiers = 0) {
     await cdp.call('Input.dispatchKeyEvent', { type: 'keyDown', key, code, modifiers });
     await cdp.call('Input.dispatchKeyEvent', { type: 'keyUp', key, code, modifiers });
+  }
+  async function setViewport(width) {
+    await cdp.call('Emulation.setDeviceMetricsOverride', { width, height: width <= 390 ? 1000 : 1200, deviceScaleFactor: 1, mobile: width <= 390 });
   }
   async function search(query, kind) {
     await set('global-search', query);
@@ -156,27 +164,95 @@ async function main(settings) {
     members: 'team-count', activity: 'activity-count', rules: 'rules-count',
   };
   async function selectSection(section) {
-    await cdp.evaluate(`document.querySelector('#section-nav [data-section-link][data-section="${section}"]').click()`);
+    const interaction = await cdp.evaluate(`(() => {
+      window.scrollTo(0, 0);
+      const nav = document.getElementById('section-nav');
+      const link = nav?.querySelector('[data-section-link][data-section="${section}"]');
+      if (!nav || !link) return null;
+      const before = nav.scrollLeft;
+      link.scrollIntoView({ block: 'nearest', inline: 'center' });
+      const navRect = nav.getBoundingClientRect();
+      const rect = link.getBoundingClientRect();
+      const x = Math.max(navRect.left + 8, Math.min(rect.left + rect.width / 2, navRect.right - 8));
+      const y = Math.max(navRect.top + 8, Math.min(rect.top + rect.height / 2, navRect.bottom - 8));
+      const hit = document.elementFromPoint(x, y);
+      return {
+        x,
+        y,
+        before,
+        after: nav.scrollLeft,
+        navClientWidth: nav.clientWidth,
+        navScrollWidth: nav.scrollWidth,
+        hitSection: hit?.closest('[data-section-link]')?.dataset.section || null,
+        hitInsideNav: !!hit?.closest('#section-nav'),
+      };
+    })()`);
+    assert.ok(interaction, section + ' navigation link exists');
+    assert.equal(interaction.hitInsideNav, true, section + ' navigation hit target stays inside the sticky bar');
+    assert.equal(interaction.hitSection, section, section + ' navigation hit test reaches the intended tab');
+    await mouseClick(interaction.x, interaction.y);
     await waitFor(`document.querySelector('#section-nav [data-section-link][aria-current="page"]')?.dataset.section===${literal(section)}`, section + ' navigation selection');
+    return interaction;
   }
   async function checkSectionNavigation(width) {
+    await cdp.evaluate('window.scrollTo(0, 0)');
+    await click('board-view');
+    await waitFor(`document.querySelector('#section-nav [aria-current="page"]')?.dataset.section==='board'`, width + 'px board section before sticky navigation checks');
     const nav = await cdp.evaluate(`(() => {
       const nav=document.getElementById('section-nav');
-      return {visible:!!nav?.getClientRects().length,groups:Array.from(nav?.querySelectorAll('.nav-group')||[],group=>{const heading=group.querySelector('h2,h3,h4')?.cloneNode(true);heading?.querySelectorAll('.group-count').forEach(count=>count.remove());return {heading:heading?.textContent.trim(),count:group.querySelector('.group-count')?.textContent.trim(),sections:Array.from(group.querySelectorAll('[data-section-link]'),link=>link.dataset.section)};}),sections:Array.from(nav?.querySelectorAll('[data-section-link]')||[],link=>link.dataset.section)};
+      const content=document.querySelector('.dashboard-content');
+      const links=Array.from(nav?.querySelectorAll('[data-section-link]')||[]);
+      const linkTops=[...new Set(links.map(link=>Math.round(link.getBoundingClientRect().top)))];
+      return {
+        visible:!!nav?.getClientRects().length,
+        groups:Array.from(nav?.querySelectorAll('.nav-group')||[],group=>{const heading=group.querySelector('h2,h3,h4')?.cloneNode(true);heading?.querySelectorAll('.group-count').forEach(count=>count.remove());return {heading:heading?.textContent.trim(),count:group.querySelector('.group-count')?.textContent.trim(),sections:Array.from(group.querySelectorAll('[data-section-link]'),link=>link.dataset.section)};}),
+        sections:links.map(link=>link.dataset.section),
+        scrollable:nav ? nav.scrollWidth > nav.clientWidth + 1 : false,
+        wraps:linkTops.length > 1,
+        navLeft:nav?.getBoundingClientRect().left,
+        navWidth:nav?.getBoundingClientRect().width,
+        contentLeft:content?.getBoundingClientRect().left,
+        contentWidth:content?.getBoundingClientRect().width,
+      };
     })()`);
     assert.equal(nav.visible, true, width + 'px section navigation is visible');
     assert.deepEqual(nav.groups, navigationGroups.map(group=>({heading:group.title,count:String(group.sections.length),sections:group.sections})), width + 'px navigation has four named groups and exact section counts');
     assert.deepEqual(nav.sections, Object.keys(sectionCounts), width + 'px every section has exactly one navigation entry');
-    const position = await cdp.evaluate(`(() => { const nav=document.getElementById('section-nav').getBoundingClientRect(); const panels=Array.from(document.querySelectorAll('.panel[data-section]')).filter(panel=>panel.getClientRects().length).map(panel=>panel.getBoundingClientRect()); return {navRight:nav.right,navBottom:nav.bottom,panelsLeft:Math.min(...panels.map(panel=>panel.left)),panelsTop:Math.min(...panels.map(panel=>panel.top))}; })()`);
-    if (width === 1440) assert.ok(position.navRight <= position.panelsLeft + 1, 'desktop section navigation is left of the overview panels');
-    else assert.ok(position.navBottom <= position.panelsTop + 1, 'phone section navigation stacks above the selected panel');
+    assert.ok(Math.abs(nav.navLeft - nav.contentLeft) <= 1, width + 'px sticky navigation aligns with the dashboard content left edge');
+    assert.ok(Math.abs(nav.navWidth - nav.contentWidth) <= 2, width + 'px sticky navigation spans the dashboard content width');
+    const position = await cdp.evaluate(`(() => {
+      const nav=document.getElementById('section-nav').getBoundingClientRect();
+      const panels=Array.from(document.querySelectorAll('.panel[data-section]')).filter(panel=>panel.getClientRects().length).map(panel=>panel.getBoundingClientRect());
+      return {navBottom:nav.bottom,panelsTop:Math.min(...panels.map(panel=>panel.top)),sticky:getComputedStyle(document.getElementById('section-nav')).position};
+    })()`);
+    assert.equal(position.sticky, 'sticky', width + 'px section navigation stays sticky');
+    assert.ok(position.navBottom <= position.panelsTop + 1, width + 'px section navigation sits above the dashboard panels');
+    const sticky = await cdp.evaluate(`(() => {
+      const nav=document.getElementById('section-nav');
+      const naturalTop=Math.round(nav.getBoundingClientRect().top + window.scrollY);
+      const maxScroll=document.documentElement.scrollHeight - window.innerHeight;
+      const firstTarget=Math.min(maxScroll, naturalTop + 120);
+      window.scrollTo(0, firstTarget);
+      const stuck=nav.getBoundingClientRect().top;
+      const secondTarget=Math.min(maxScroll, naturalTop + 240);
+      window.scrollTo(0, secondTarget);
+      const stillStuck=nav.getBoundingClientRect().top;
+      window.scrollTo(0, 0);
+      return {naturalTop, firstTarget, secondTarget, stuck, stillStuck, maxScroll};
+    })()`);
+    assert.ok(sticky.naturalTop > 12, width + 'px navigation begins below the top of the page before sticking');
+    assert.ok(sticky.firstTarget > sticky.naturalTop, width + 'px page can scroll past the natural navigation position');
+    assert.ok(Math.abs(sticky.stuck - 12) <= 4, width + 'px navigation stays sticky after page scroll');
+    if (sticky.secondTarget > sticky.naturalTop) assert.ok(Math.abs(sticky.stillStuck - 12) <= 4, width + 'px navigation remains sticky deeper into the page');
+    if (width === 390) assert.ok(nav.scrollable || nav.wraps, '390px navigation stays usable by wrapping or scrolling inside the sticky bar');
     for (const section of Object.keys(sectionCounts)) {
-      await selectSection(section);
+      if (width === 390 && section === 'rules') await cdp.evaluate(`document.getElementById('section-nav').scrollLeft = 0`);
+      const interaction = await selectSection(section);
       const state = await cdp.evaluate(`(() => {
         const nav=document.getElementById('section-nav'),links=Array.from(nav.querySelectorAll('[data-section-link]'));
         const link=links.find(link=>link.dataset.section===${literal(section)}),counter=document.getElementById(${literal(sectionCounts[section])});
         const visible=Array.from(document.querySelectorAll('.panel[data-section]')).filter(panel=>panel.getClientRects().length);
-        return {current:links.filter(link=>link.getAttribute('aria-current')==='page').map(link=>link.dataset.section),badge:link.querySelector('.nav-count')?.textContent.trim(),count:counter?.textContent.trim(),stored:localStorage.getItem('agentmesh:current-section'),visible:visible.map(panel=>panel.dataset.section),linkVisible:!!link.getClientRects().length,targetExists:!!document.getElementById(decodeURIComponent(link.hash.slice(1)))};
+        return {current:links.filter(link=>link.getAttribute('aria-current')==='page').map(link=>link.dataset.section),badge:link.querySelector('.nav-count')?.textContent.trim(),count:counter?.textContent.trim(),stored:localStorage.getItem('agentmesh:current-section'),visible:visible.map(panel=>panel.dataset.section),linkVisible:!!link.getClientRects().length,targetExists:!!document.getElementById(decodeURIComponent(link.hash.slice(1))),workingListVisible:!!document.getElementById('working-list')?.getClientRects().length,workingText:document.getElementById('working-list')?.textContent || ''};
       })()`);
       assert.deepEqual(state.current, [section], width + 'px ' + section + ' is the only aria-current entry');
       assert.equal(state.linkVisible, true, width + 'px ' + section + ' link remains usable');
@@ -185,8 +261,18 @@ async function main(settings) {
       assert.equal(state.badge, state.count, width + 'px ' + section + ' badge matches its panel');
       assert.equal(state.stored, section, width + 'px current section is remembered as a non-secret identifier');
       assert.ok(state.visible.includes(section), width + 'px ' + section + ' is reachable');
-      if (width === 390) assert.ok(state.visible.every(value=>value===section), 'phone shows only the selected ' + section + ' section');
-      else for (const visibleSection of Object.keys(sectionCounts).filter(value=>value!=='timeline')) assert.ok(state.visible.includes(visibleSection), 'desktop keeps ' + visibleSection + ' in its compact overview');
+      if (width === 390) {
+        assert.ok(state.visible.every(value=>value===section), 'phone shows only the selected ' + section + ' section');
+        if (section === 'members') {
+          assert.equal(state.workingListVisible, true, 'phone members section exposes the working-now list');
+          assert.ok(state.workingText.includes('T-102') && state.workingText.includes('agent-a'), 'phone members section keeps the working-now content');
+        }
+        if (section === 'rules' && interaction.navScrollWidth > interaction.navClientWidth + 1) {
+          assert.ok(interaction.after > interaction.before && interaction.after > 0, '390px navigation scrolls inside the sticky bar to reach later tabs');
+        }
+      } else {
+        for (const visibleSection of Object.keys(sectionCounts).filter(value=>value!=='timeline')) assert.ok(state.visible.includes(visibleSection), 'desktop keeps ' + visibleSection + ' in its compact overview');
+      }
       await noHorizontalScroll(width, section + ' navigation');
     }
     await selectSection('board');
@@ -201,6 +287,53 @@ async function main(settings) {
       }
     }
   }
+  async function checkBoardLayout(width, expectedColumns) {
+    await setViewport(width);
+    await cdp.evaluate('window.scrollTo(0, 0)');
+    await click('board-view');
+    await waitFor(`document.querySelector('#section-nav [aria-current="page"]')?.dataset.section==='board'`, width + 'px board view selection');
+    await waitFor(`document.querySelectorAll('#tasks .board-column').length===4`, width + 'px board columns loaded');
+    const layout = await cdp.evaluate(`(() => {
+      const panel = document.getElementById('board-panel').getBoundingClientRect();
+      const board = document.getElementById('tasks').getBoundingClientRect();
+      const columns = Array.from(document.querySelectorAll('#tasks .board-column')).filter(column=>column.getClientRects().length).map((column, index) => {
+        const rect = column.getBoundingClientRect();
+        return { index, left: Math.round(rect.left), top: Math.round(rect.top), width: Math.round(rect.width), bottom: Math.round(rect.bottom) };
+      });
+      const uniqueLefts = [...new Set(columns.map(column => column.left))];
+      const uniqueTops = [...new Set(columns.map(column => column.top))];
+      const docTop = rect => Math.round(rect.top + window.scrollY);
+      return {
+        panelLeft: Math.round(panel.left),
+        panelWidth: Math.round(panel.width),
+        boardLeft: Math.round(board.left),
+        boardWidth: Math.round(board.width),
+        boardBottom: Math.round(board.bottom + window.scrollY),
+        columns,
+        uniqueLefts,
+        uniqueTops,
+        membersTop: docTop(document.getElementById('members-panel').getBoundingClientRect()),
+        workingTop: docTop(document.getElementById('working-list').getBoundingClientRect()),
+        activityTop: docTop(document.getElementById('activity-panel').getBoundingClientRect()),
+      };
+    })()`);
+    assert.equal(layout.columns.length, 4, width + 'px shows the four workflow columns');
+    assert.equal(layout.uniqueLefts.length, expectedColumns, width + 'px board uses ' + expectedColumns + ' readable column tracks');
+    assert.ok(layout.columns.every(column => column.width >= 280), width + 'px board columns stay at least about 280px wide (' + JSON.stringify(layout.columns) + ')');
+    assert.ok(layout.boardLeft >= layout.panelLeft && layout.boardLeft + layout.boardWidth <= layout.panelLeft + layout.panelWidth + 1, width + 'px board stays inside its panel');
+    if (expectedColumns === 4) {
+      assert.equal(layout.uniqueTops.length, 1, '1440px board keeps all four workflow columns on the same row');
+      assert.ok(layout.membersTop >= layout.boardBottom, '1440px members panel sits below the board');
+      assert.ok(layout.workingTop >= layout.boardBottom, '1440px working-now content sits below the board');
+      assert.ok(layout.activityTop >= layout.boardBottom, '1440px activity panel sits below the board');
+    } else if (expectedColumns === 2) {
+      assert.equal(layout.uniqueTops.length, 2, width + 'px board steps down to two rows of columns');
+    } else if (expectedColumns === 1) {
+      assert.ok(layout.uniqueTops.length >= 2, width + 'px board stacks its columns vertically');
+    }
+    await noHorizontalScroll(width, 'board layout');
+  }
+
   try {
     await cdp.call('Page.enable'); await cdp.call('Runtime.enable'); await cdp.call('Network.enable');
     await cdp.call('Fetch.enable', { patterns: [{ urlPattern: '*' }] });
@@ -292,8 +425,11 @@ async function main(settings) {
     assert.ok(await cdp.evaluate(`document.getElementById('shortcuts').textContent.includes('[') && document.getElementById('shortcuts').textContent.includes(']')`), 'shortcut help documents both group navigation keys');
     await click('close-shortcuts');
 
+    for (const [width, expectedColumns] of [[1440, 4], [1000, 2], [760, 2], [640, 1], [390, 1]]) {
+      await checkBoardLayout(width, expectedColumns);
+    }
     for (const width of [1440, 390]) {
-      await cdp.call('Emulation.setDeviceMetricsOverride', { width, height: 1000, deviceScaleFactor: 1, mobile: width === 390 });
+      await setViewport(width);
       await checkSectionNavigation(width);
       await click('board-view'); await delay(150);
       assert.equal(await cdp.evaluate(`document.querySelector('#section-nav [aria-current="page"]')?.dataset.section`), 'board', 'Board toolbar and navigation selection stay synchronized');
