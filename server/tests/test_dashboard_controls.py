@@ -4,9 +4,21 @@ import json
 import re
 import subprocess
 
+import pytest
+
 from agentmesh_server.config import init_config
 from test_dashboard import BROWSER_SMOKE, dashboard_document
 from test_hub_seed import running_hub
+
+@pytest.fixture
+def api(tmp_path):
+    # Authentication uses the actual hub; only the browser-visible legacy
+    # capability below is projected to exercise standalone/older snapshots.
+    directory = tmp_path / "dashboard-controls"
+    config = init_config(directory)
+    with running_hub(directory, config) as local_api:
+        yield local_api
+
 
 # Keep the existing browser-safety harness authoritative. This adapter adds the
 # small pieces of native form behavior needed by write controls and forwards
@@ -36,7 +48,7 @@ _BROWSER = _BROWSER.replace(
     "    reset() { for (const field of this.querySelectorAll('input, textarea, select')) "
     "{ field.value = field.getAttribute('value') || ''; field.checked = false; } }",
 )
-_FETCH_START = _BROWSER.index("    fetch: async (url, options) => {")
+_FETCH_START = _BROWSER.index("    fetch: async (url, options = {}) => {")
 _FETCH_END = _BROWSER.index("    },\n  });", _FETCH_START)
 _BROWSER = _BROWSER[:_FETCH_START] + r"""
     fetch: async (url, options = {}) => {
@@ -49,8 +61,23 @@ _BROWSER = _BROWSER[:_FETCH_START] + r"""
         response = {status, ok: status >= 200 && status < 300,
           json: async () => ({error: 'The server rejected this action; refresh and try again.'})};
       } else {
-        const actual = await fetch(input.origin + url, options);
+        assert.equal(new Headers(options.headers).has('Authorization'), false, 'page never sends a bearer');
+        const headers = new Headers(options.headers);
+        if (cookieJar.has('agentmesh_session')) headers.set('Cookie', 'agentmesh_session=' + cookieJar.get('agentmesh_session'));
+        if (['POST', 'PUT', 'DELETE', 'PATCH'].includes(options.method)) headers.set('Origin', input.origin);
+        call.networkHeaders = headers;
+        const actual = await fetch(input.origin + url, {...options, headers});
         const payload = await actual.json();
+        const setCookie = actual.headers.get('set-cookie');
+        if (setCookie) {
+          assert.match(setCookie, /;\s*HttpOnly/i); assert.match(setCookie, /;\s*Secure/i); assert.match(setCookie, /;\s*SameSite=Strict/i);
+          if (/Max-Age=0(?:;|$)/i.test(setCookie)) cookieJar.delete('agentmesh_session');
+          else { assert.match(setCookie, /Max-Age=2592000(?:;|$)/i); cookieJar.set('agentmesh_session', /^agentmesh_session=([^;]*)/.exec(setCookie)[1]); }
+        }
+        // This fixture intentionally supplies the older legacy capability set.
+        // Its task store/actions remain real HTTP routes; the full team board
+        // and unprojected cookie integration are covered by unified_dashboard.
+        if (url.startsWith('/v1/dashboard/state')) delete payload.team_transcript;
         call.status = actual.status; call.payload = payload;
         response = {status: actual.status, ok: actual.ok, json: async () => payload};
       }
@@ -74,6 +101,7 @@ async function idle(app) {
   await waitFor(() => app.calls.every(call => call.done), 'HTTP requests complete');
   await flush(); await flush();
   assertKnownRoutes(app);
+  assertCredentialStorage(app, Object.values(input.tokens));
 }
 function assertKnownRoutes(app) {
   const base = new Set(['/v1/huddles', '/v1/master/sections', '/v1/master/submit', '/v1/master/vote', '/v1/questions', '/v1/claims', '/v1/claims/release', '/v1/settings']);
@@ -99,6 +127,7 @@ function assertKnownRoutes(app) {
 }
 async function login(app, role) {
   assert.equal(app.get('access-mode'), null, 'one access form auto-detects writable credentials');
+  await idle(app);
   app.get('access-key').value = input.tokens[role];
   app.get('access-form').fire('submit');
   await idle(app);
@@ -211,12 +240,14 @@ def test_dashboard_task_and_prompt_controls_call_real_routes(api):
     seed = _seed_controls(api)
     _run_browser(api, r"""
   const app = browser(), get = app.get;
-  assert.equal(app.calls.length, 0, 'no fetch before login');
+  await idle(app);
+  assert.equal(app.calls.length, 1, 'boot checks cookie once');
+  assert.equal(app.calls[0].url, '/api/state'); assert.equal(app.calls[0].status, 401);
   await login(app, 'a');
-  assert.match(app.calls[0].url, /^\/v1\/dashboard\/state\?after=0$/);
+  assert.ok(app.calls.some(call => /^\/v1\/dashboard\/state\?after=0$/.test(call.url)));
   assert.equal(app.storage.has('agentmesh-viewer'), false, 'agent tokens stay out of localStorage');
-  assert.deepEqual(JSON.parse(app.sessionStorage.get('agentmesh:session')), {key: input.tokens.a, mode: 'auto'}, 'agent token is remembered only for this browser session');
-  assert.ok(![...app.storage.values()].includes(input.tokens.a), 'agent token is not persisted under another key');
+  assertSessionCredential(app, input.tokens.a, 'auto');
+  assertCredentialStorage(app, Object.values(input.tokens));
   for (const name of ['take', 'accept', 'decline', 'start', 'release']) {
     const path = '/v1/dashboard/tasks/' + input.seed.tasks[name] + '/' + name;
     const call = await click(app, 'task-' + name, path);
@@ -281,9 +312,10 @@ def test_dashboard_task_and_prompt_controls_call_real_routes(api):
   assert.match(other.get('news').textContent, /Please clarify the second revision/);
   assert.match(other.get('news').textContent, /Reviewed the new section and approve/, 'feed retains historical vote comments');
   for (const [client, role] of [[app, 'a'], [other, 'b']]) for (const call of client.calls) {
-    assert.ok(call.options.headers.Authorization === 'Bearer ' + input.tokens[role], 'request carries the session bearer token');
+    assert.equal(new Headers(call.options.headers).has('Authorization'), false, 'page never carries a bearer');
+    if (!call.url.startsWith('/auth/') && call.status !== 401) assert.equal(call.networkHeaders.get('Cookie'), 'agentmesh_session=' + input.tokens[role], 'browser transport attaches session cookie');
     assert.equal(call.options.cache, 'no-store');
-    if (call.options.method === 'POST') assert.equal(call.options.headers['Content-Type'], 'application/json');
+    if (call.options.method === 'POST' && call.url !== '/auth/logout') assert.equal(call.options.headers['Content-Type'], 'application/json');
   }
 """, seed)
 
@@ -295,10 +327,11 @@ def test_dashboard_rejected_viewer_and_invalid_credentials_never_offer_writes(tm
         _seed_controls(api)
         _run_browser(api, r"""
   const app = browser();
+  await idle(app);
   assert.equal(app.get('access-mode'), null, 'viewer mode is not offered');
   app.get('access-key').value = 'short';
   app.get('access-form').fire('submit');
-  assert.equal(app.calls.length, 0, 'short credentials are rejected without a request');
+  assert.equal(app.calls.length, 1, 'short credentials are rejected without another request');
   assert.equal(app.get('auth-error').hidden, false);
   for (const token of [input.tokens.viewer, 'x'.repeat(40)]) {
     app.get('access-key').value = token;
@@ -311,11 +344,12 @@ def test_dashboard_rejected_viewer_and_invalid_credentials_never_offer_writes(tm
     assert.equal(app.get('messages').textContent, '');
     assert.equal(app.get('member-heartbeats').textContent, '');
     assert.equal(app.storage.has('agentmesh-viewer'), false);
-    assert.equal(app.sessionStorage.has('agentmesh:session'), false, 'rejected credentials are not remembered');
+    assert.equal(app.sessionStorage.has('agentmesh:session'), false, 'rejected credentials leave no obsolete tab credential');
+    assertCredentialStorage(app, [token, ...Object.values(input.tokens)]);
   }
-  assert.ok(app.calls.some(call => call.url.startsWith('/v1/dashboard/state') && call.status === 401), 'viewer token is rejected by agent authentication');
+  assert.ok(app.calls.some(call => call.url === '/auth/login' && call.status === 401), 'viewer token is rejected by the real login gate');
   assert.ok(!app.calls.some(call => call.url.startsWith('/v1/transcript')), 'removed viewer transcript is never requested');
-  assert.ok(app.calls.every(call => (call.options.method || 'GET') === 'GET'), 'credential detection cannot mutate state');
+  assert.ok(app.calls.every(call => (call.options.method || 'GET') === 'GET' || call.url === '/auth/login'), 'credential detection cannot mutate application data');
         """)
 
 
@@ -408,8 +442,9 @@ def test_dashboard_huddles_questions_claims_settings_and_commit_events(api):
   assert.equal(get('news').querySelectorAll('img').length, 0, 'commit text is rendered literally');
   for (const kind of ['huddle', 'question', 'file', 'master']) assert.match(get('news').textContent.toLowerCase(), new RegExp(kind));
   for (const call of app.calls) {
-    assert.ok(call.options.headers.Authorization === 'Bearer ' + input.tokens.a, 'every control uses the agent bearer credential');
-    if (call.options.method === 'POST') assert.equal(call.options.headers['Content-Type'], 'application/json');
+    assert.equal(new Headers(call.options.headers).has('Authorization'), false, 'every control keeps bearer credentials out of page state');
+    if (!call.url.startsWith('/auth/') && call.status !== 401) assert.equal(call.networkHeaders.get('Cookie'), 'agentmesh_session=' + input.tokens.a, 'browser transport authenticates the control with its cookie');
+    if (call.options.method === 'POST' && call.url !== '/auth/logout') assert.equal(call.options.headers['Content-Type'], 'application/json');
   }
 """, seed)
 
@@ -471,8 +506,9 @@ def test_dashboard_write_errors_drafts_duplicate_submit_and_logout_races(api):
   assert.equal(get('auth').hidden, false);
   assert.equal(get('workspace').hidden, true);
   assert.equal(app.timers.size, 0);
-  assert.match(get('auth-error').textContent, /agent token was rejected/);
+  assert.match(get('auth-error').textContent, /session.*(?:expired|rejected)|key.*rejected|agent token was rejected/i);
   assert.equal(get('questions').textContent, '', 'expired credentials clear private transcript text');
+  assert.equal(app.sessionStorage.has('agentmesh:session'), false, 'expired credentials leave no obsolete tab credential');
   await login(app, 'a');
   assert.equal(get('question-text').value, '', 'a new session does not restore an old private draft');
 
@@ -485,12 +521,12 @@ def test_dashboard_write_errors_drafts_duplicate_submit_and_logout_races(api):
   const signedOutCalls = app.calls.length;
   releaseLate(); await idle(app);
   assert.equal(app.calls.length, signedOutCalls, 'late completion cannot trigger a new authenticated refresh');
+  assert.equal(app.sessionStorage.has('agentmesh:session'), false, 'late completion cannot restore obsolete tab credentials');
   assert.equal(get('auth').hidden, false);
   assert.equal(get('workspace').hidden, true);
   assert.equal(app.timers.size, 0);
   assert.equal(get('action-status').hidden, true, 'late completion cannot restore a success notice');
   assert.equal(get('claims').textContent, '', 'late completion cannot restore private claims');
   assert.equal(app.root.querySelectorAll('[data-write]').length, 0);
-  assert.ok(![...app.storage.values()].includes(input.tokens.a), 'logout leaves no persisted agent credential');
-  assert.equal(app.sessionStorage.has('agentmesh:session'), false, 'logout clears the saved agent session');
+  assertCredentialStorage(app, Object.values(input.tokens));
 """, seed)

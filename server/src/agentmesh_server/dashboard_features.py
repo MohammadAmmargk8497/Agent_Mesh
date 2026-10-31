@@ -29,8 +29,8 @@ def compose_dashboard(page):
     page = _replace_once(page, '        function takeToken() {', extension + '\n        function takeToken() {')
     page = _replace_once(page, '        async function api(path, body) {',
                          '        async function api(path, body, method = body === undefined ? "GET" : "POST") {')
-    page = _replace_once(page, '            const options = { headers: { Authorization: `Bearer ${token}` }, cache: "no-store", signal: abort.signal };',
-                         '            const options = { method, headers: { Authorization: `Bearer ${token}` }, cache: "no-store", signal: abort.signal };')
+    page = _replace_once(page, '            const options = { headers: {}, credentials: "same-origin", cache: "no-store", signal: abort.signal };',
+                         '            const options = { method, headers: {}, credentials: "same-origin", cache: "no-store", signal: abort.signal };')
     page = _replace_once(page, '              options.method = "POST";\n', '')
     page = _replace_once(page, "            buttons.length ? h('div', { class: 'card-actions' }, buttons) : null,\n          );\n        }\n\n        // ---------- huddles ----------",
                          "            buttons.length ? h('div', { class: 'card-actions' }, buttons) : null,\n            renderTaskHandoffs(t),\n          );\n        }\n\n        // ---------- huddles ----------")

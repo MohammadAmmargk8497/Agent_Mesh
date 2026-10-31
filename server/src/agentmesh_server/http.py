@@ -11,10 +11,12 @@ import re
 import secrets
 import socket
 import sqlite3
+import ssl
 import time
 import uuid
 from contextlib import closing
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.cookies import CookieError, SimpleCookie
 from importlib.resources import files
 from urllib.parse import parse_qs, urlsplit
 
@@ -32,6 +34,8 @@ UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}
 TASK_PATH = re.compile(r"/v1/tasks/([0-9a-f-]{36})(?:/(claim|complete|review|cancel))?", re.I)
 ACK_PATH = re.compile(r"/v1/messages/([0-9a-f-]{36})/ack", re.I)
 PATCH_PATH = re.compile(r"/v1/patches/([0-9a-f-]{36})", re.I)
+SESSION_COOKIE = "agentmesh_session"
+COOKIE_VALUE = re.compile(r"[\x21\x23-\x2b\x2d-\x3a\x3c-\x5b\x5d-\x7e]+")
 
 
 class HttpError(Exception):
@@ -261,9 +265,121 @@ class Handler(BaseHTTPRequestHandler):
         if self.command != "HEAD":
             self.wfile.write(content)
 
-    def _json(self, data, status=200):
+    def _json(self, data, status=200, extra=None):
         content = json.dumps(data, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
-        self._send(content, status, "application/json; charset=utf-8")
+        self._send(content, status, "application/json; charset=utf-8", extra)
+
+    def _require_same_origin(self):
+        """Cookie mutations cannot rely on SameSite alone for CSRF protection."""
+        scheme = self._request_scheme()
+        origins = self.headers.get_all("Origin", [])
+        hosts = self.headers.get_all("Host", [])
+        if len(origins) == len(hosts) == 1:
+            try:
+                origin = urlsplit(origins[0])
+                # The browser sends a serialized origin, never a URL path, user
+                # info, query or fragment. Preserve ports when comparing Host.
+                if (origin.scheme == scheme and origin.netloc == hosts[0]
+                        and origins[0] == f"{origin.scheme}://{origin.netloc}"
+                        and origin.hostname and origin.username is None
+                        and origin.password is None):
+                    origin.port  # Reject malformed ports as well.
+                    return
+            except ValueError:
+                pass
+        raise HttpError(403, "same-origin Origin required")
+
+    def _request_scheme(self):
+        scheme = "https" if isinstance(self.connection, ssl.SSLSocket) else "http"
+        forwarded = self.headers.get_all("X-Forwarded-Proto", [])
+        try:
+            trusted_proxy = _ip(self.client_address[0]).is_loopback
+        except ValueError:
+            trusted_proxy = False
+        if trusted_proxy and forwarded:
+            if len(forwarded) != 1 or forwarded[0] not in ("http", "https"):
+                raise HttpError(403, "invalid forwarded protocol")
+            scheme = forwarded[0]
+        return scheme
+
+    def _session_key(self):
+        raw = "; ".join(self.headers.get_all("Cookie", []))
+        # SimpleCookie otherwise silently takes the last duplicate. Ambiguous
+        # session cookies must not choose an account based on header ordering.
+        if len(re.findall(r"(?:^|;)\s*agentmesh_session\s*=", raw)) != 1:
+            return None
+        cookie = SimpleCookie()
+        try:
+            cookie.load(raw)
+        except CookieError:
+            return None
+        value = cookie.get(SESSION_COOKIE)
+        key = value.value if value else ""
+        return key if COOKIE_VALUE.fullmatch(key) else None
+
+    def _member_state(self, key):
+        """Validate browser sessions against the same member state as /api/state."""
+        endpoint = self.server.hub.endpoint()
+        connection = http.client.HTTPConnection(endpoint.hostname, endpoint.port, timeout=35)
+        try:
+            connection.request("GET", "/api/state", headers={
+                "Authorization": "Bearer " + key,
+                "X-Forwarded-For": self.client_address[0],
+            })
+            response = connection.getresponse()
+            content = response.read()
+            if response.status != 200:
+                raise HttpError(response.status, "unauthorized" if response.status == 401
+                                else "could not validate session")
+            return json.loads(content)
+        except (OSError, http.client.HTTPException, ValueError):
+            raise HubUnavailable("hub unavailable") from None
+        finally:
+            connection.close()
+
+    def _auth(self, path):
+        if self.command != "POST":
+            raise HttpError(405, "method not allowed")
+        self._require_same_origin()
+        if path == "/auth/login":
+            key = self._body_json().get("key")
+            try:
+                if not isinstance(key, str) or not COOKIE_VALUE.fullmatch(key):
+                    raise HttpError(401, "unauthorized")
+                member_state = self._member_state(key)
+            except HttpError as exc:
+                if exc.status not in (401, 403):
+                    raise
+                self._json({"error": "unauthorized"}, 401, self._session_headers())
+                return
+            team_id = member_state.get("team", {}).get("id")
+            if not isinstance(team_id, str) or not team_id:
+                raise HubUnavailable("hub unavailable")
+            self._json({"team_id": team_id}, extra=self._session_headers(key, 2592000))
+        elif path == "/auth/logout":
+            self._json({"ok": True}, extra=self._session_headers())
+        else:
+            raise HttpError(404, "not found")
+
+    def _session_headers(self, key="", max_age=0):
+        return {"Set-Cookie": f"{SESSION_COOKIE}={key}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age={max_age}"}
+
+    def _cookie_authorization(self, path):
+        if (self.headers.get_all("Authorization") is not None
+                or not path.startswith(("/api/", "/v1/"))):
+            return
+        key = self._session_key()
+        if key is None:
+            return
+        websocket = any(value.strip().lower() == "websocket"
+                        for value in self.headers.get_all("Upgrade", []))
+        if self.command in ("POST", "PUT", "DELETE", "PATCH") or websocket:
+            self._require_same_origin()
+        if path.startswith("/v1/"):
+            # Legacy rotations may retain old agent tokens. Browser sessions
+            # must still be current hub member keys, not revoked member keys.
+            self._member_state(key)
+        self.headers["Authorization"] = "Bearer " + key
 
     def _dashboard(self, name="dashboard.html"):
         nonce = base64.b64encode(secrets.token_bytes(16)).decode("ascii")
@@ -306,7 +422,7 @@ class Handler(BaseHTTPRequestHandler):
         connection = http.client.HTTPConnection(endpoint.hostname, endpoint.port, timeout=35)
         hop = {"connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
                "te", "trailer", "transfer-encoding", "upgrade", "host", "content-length",
-               "x-forwarded-for"}
+               "x-forwarded-for", "cookie"}
         hop.update(value.strip().lower() for value in self.headers.get("Connection", "").split(","))
         headers = {name: value for name, value in self.headers.items() if name.lower() not in hop}
         headers["X-Forwarded-For"] = self.client_address[0]
@@ -397,6 +513,10 @@ class Handler(BaseHTTPRequestHandler):
         try:
             self.body = self._read_body()
             url = urlsplit(self.path)
+            if url.path.startswith("/auth/"):
+                self._auth(url.path)
+                return
+            self._cookie_authorization(url.path)
             if self.command in ("GET", "HEAD") and url.path in ("/index.html", "/viewer"):
                 self._send(b"", 302, "text/plain; charset=utf-8", {"Location": "/"})
                 return

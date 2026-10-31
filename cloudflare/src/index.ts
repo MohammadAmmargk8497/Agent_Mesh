@@ -28,6 +28,49 @@ const MAX_SOCKETS_PER_AGENT = 4;
 const DAY = 86_400_000;
 const legacyTeams = new WeakMap<Env, string>();
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const SESSION_COOKIE = "agentmesh_session";
+const SESSION_FLAGS = "; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=";
+
+// Only cookie-octets are accepted: never reflect delimiters or controls into a header.
+function validSessionKey(value: unknown): value is string {
+  return typeof value === "string" && value.length <= 4096 && /^[\x21\x23-\x2B\x2D-\x3A\x3C-\x5B\x5D-\x7E]+$/.test(value);
+}
+function sessionKey(request: Request): string | null {
+  const matches = (request.headers.get("cookie") ?? "").split(";")
+    .map(part => part.trim()).filter(part => part.split("=", 1)[0] === SESSION_COOKIE);
+  if (matches.length !== 1) return null; // Duplicate names are ambiguous; fail closed.
+  const value = matches[0].slice(SESSION_COOKIE.length + 1);
+  return matches[0].startsWith(SESSION_COOKIE + "=") && validSessionKey(value) ? value : null;
+}
+function sessionResponse(data: unknown, key: string, status = 200): Response {
+  const response = json(data, status);
+  response.headers.set("set-cookie", SESSION_COOKIE + "=" + key + SESSION_FLAGS + (key ? "2592000" : "0"));
+  return response;
+}
+async function sessionState(request: Request, env: Env, key: string): Promise<Response> {
+  return env.HUB.get(env.HUB.idFromName("openhuddle-hub")).fetch(new Request(new URL("/api/state", request.url), {
+    headers: { authorization: "Bearer " + key, "x-agentmesh-client-ip": request.headers.get("cf-connecting-ip") ?? "unknown" },
+  }));
+}
+async function authenticateSession(request: Request, env: Env, url: URL): Promise<Response> {
+  if (request.method !== "POST") return error("method not allowed", 405);
+  if (request.headers.get("origin") !== url.origin) return error("origin not allowed", 403);
+  if (url.pathname === "/auth/logout") return sessionResponse({ ok: true }, "");
+  if (url.pathname !== "/auth/login") return error("not found", 404);
+  const ip = request.headers.get("cf-connecting-ip") ?? "unknown";
+  if (env.LIMITER && !(await env.LIMITER.limit({ key: `ip:${ip}` })).success) return error("rate limited", 429);
+  try {
+    const body = await readJson(request);
+    if (!validSessionKey(body.key)) return sessionResponse({ error: "unauthorized" }, "", 401);
+    const response = await sessionState(request, env, body.key);
+    if (!response.ok) return response.status === 401 ? sessionResponse({ error: "unauthorized" }, "", 401) : response;
+    const state = await response.json() as any;
+    if (typeof state.team?.id !== "string") return error("team unavailable", 503);
+    return sessionResponse({ team_id: state.team.id }, body.key);
+  } catch (err) {
+    return err instanceof HttpError ? error(err.message, err.status) : error("sign-in unavailable", 503);
+  }
+}
 
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), { status, headers: {
@@ -240,6 +283,27 @@ export default {
     const url = new URL(request.url);
     if (url.pathname === "/admin/export" || url.pathname.startsWith("/admin/export/") ||
         url.pathname === "/admin/restore" || url.pathname === "/admin/import") return adminExport(request, env);
+    if (url.pathname.startsWith("/auth/")) return authenticateSession(request, env, url);
+    if (url.pathname.startsWith("/api/") || url.pathname.startsWith("/v1/")) {
+      // An explicit Authorization header, including an empty one, always wins.
+      const key = request.headers.has("authorization") ? null : sessionKey(request);
+      const requiresOrigin = ["POST", "PUT", "DELETE", "PATCH"].includes(request.method) ||
+        request.headers.get("upgrade")?.toLowerCase() === "websocket";
+      if (key && requiresOrigin && request.headers.get("origin") !== url.origin)
+        return error("origin not allowed", 403);
+      const headers = new Headers(request.headers);
+      headers.delete("cookie"); // The upstream only needs its existing Bearer contract.
+      if (key) {
+        // Legacy environment tokens may remain valid during rotation, whereas
+        // browser sessions must respect the current team member/revocation state.
+        if (url.pathname.startsWith("/v1/")) {
+          const response = await sessionState(request, env, key);
+          if (!response.ok) return response;
+        }
+        headers.set("authorization", "Bearer " + key);
+      }
+      request = new Request(request, { headers });
+    }
     // Hub member tokens live in the hub DB, not the legacy environment identify gate.
     const hubRoute = url.pathname.startsWith("/api/") || url.pathname.startsWith("/t/") || url.pathname.startsWith("/join/") || url.pathname === "/robots.txt";
     if (hubRoute) {

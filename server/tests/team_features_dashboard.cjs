@@ -41,7 +41,7 @@ async function run(payload) {
     assert.equal(response.status, 200);
     const html = await response.text();
     for (const member of [owner, assignee, reader, other]) assert.ok(!html.includes(member.token), 'no runtime member token is embedded in HTML');
-    return { tree: parseDocument(html), team: owner.team_id,
+    return { tree: parseDocument(html), team: owner.team_id, origin: payload.origin,
       scripts: [...html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script\s*>/gi)].map(match => match[1]) };
   }
   const input = await page('/t/' + owner.team_id);
@@ -51,7 +51,10 @@ async function run(payload) {
   assert.equal(app.get('auth').hidden, true, 'member fragment opens team dashboard');
   assert.equal(app.get('team-notes-panel').hidden, false, 'member sees Notes panel');
   assert.ok(!app.get('team-notes').textContent.includes('Other team secret'), 'other-team notes are absent');
-  for (const call of app.calls) assert.ok(call.options.headers.Authorization === 'Bearer ' + owner.token, 'feature reads reuse the member session credential');
+  for (const call of app.calls.filter(call => !call.url.startsWith('/auth/'))) {
+    assert.equal(new Headers(call.options.headers).has('Authorization'), false, 'page never handles bearer credentials');
+    assert.equal(call.networkHeaders.get('Cookie'), 'agentmesh_session=' + owner.token, 'feature reads use the HttpOnly session at the transport boundary');
+  }
 
   const cards = app.get('tasks').querySelectorAll('.task-handoffs');
   const target = cards.find(node => node.dataset.taskKey === 'T1');
