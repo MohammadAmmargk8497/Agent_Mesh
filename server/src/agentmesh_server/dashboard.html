@@ -186,6 +186,73 @@
     .action-status{margin:12px 0;padding:10px 14px;border:1px solid var(--line);border-radius:8px;color:var(--cyan);overflow-wrap:anywhere;white-space:pre-wrap}
     .action-status.error{color:var(--orange);border-color:var(--orange)}
     .setting{display:flex;gap:7px;align-items:center;font-size:12px;margin-top:10px}
+    .dashboard-tools{margin:16px 0;padding:14px;display:grid;gap:12px}
+    .tool-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;min-width:0}
+    .search-field{flex:1 1 260px;min-width:0}
+    .search-field input{width:100%}
+    .tool-row label{font-size:12px;color:var(--muted)}
+    .tool-row select,.tool-row input{min-width:0}
+    #saved-view-name{flex:1 1 130px;max-width:220px}
+    #saved-views{max-width:220px}
+    .tool-row button{font-size:12px}
+    .view-switch{display:flex;gap:4px}
+    [aria-pressed="true"]{border-color:var(--cyan);color:var(--cyan)}
+    .search-results{display:grid;gap:6px;max-height:320px;overflow:auto;margin:0;padding:0;list-style:none}
+    .search-result{display:block;text-decoration:none;color:var(--text);padding:9px 12px;background:var(--panel-2);border-radius:6px;overflow-wrap:anywhere}
+    .search-result:hover{background:var(--hover)}
+    .working-list{display:flex;flex-wrap:wrap;gap:8px;min-width:0}
+    .working-chip{font-size:12px;border:1px solid var(--line);border-radius:8px;padding:6px 10px;overflow-wrap:anywhere;max-width:100%}
+    .working-chip[data-active="true"]{border-color:var(--cyan)}
+    .heartbeat{position:relative;overflow-wrap:anywhere;max-width:100%}
+    .heartbeat[data-active="true"]{box-shadow:0 0 0 2px color-mix(in srgb,var(--cyan) 16%,transparent),0 0 14px color-mix(in srgb,var(--cyan) 24%,transparent)}
+    .timeline-panel{margin-bottom:18px}
+    .timeline-track{display:flex;gap:14px;overflow-x:auto;overscroll-behavior-x:contain;padding:20px;max-width:100%;scroll-snap-type:x proximity}
+    .timeline-entry{position:relative;flex:0 0 250px;min-width:0;max-width:85vw;border-top:2px solid var(--cyan);border-radius:6px;padding:12px;background:var(--panel-2);scroll-snap-align:start;overflow-wrap:anywhere}
+    .timeline-entry p{white-space:pre-wrap;font-size:12px}
+    .timeline-entry a{color:var(--cyan)}
+    .timeline-entry.task-event{border-color:var(--violet)}
+    dialog{width:min(440px,calc(100% - 32px));max-height:80dvh;overflow:auto;background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:10px;padding:22px}
+    dialog::backdrop{background:var(--shadow)}
+    dialog h2{margin-bottom:12px}
+    dialog dl{display:grid;grid-template-columns:50px 1fr;gap:10px;margin:18px 0}
+    dialog dd{margin:0}
+    kbd{border:1px solid var(--line);border-radius:4px;background:var(--panel-2);padding:2px 6px;font-size:12px}
+    .filter-hint{padding:0 18px}
+    .dashboard-layout{display:grid;grid-template-columns:190px minmax(0,1fr);gap:16px;align-items:start}
+    .dashboard-content{min-width:0}
+    .section-nav{position:sticky;top:18px;max-height:calc(100dvh - 36px);overflow:auto;padding:12px;gap:14px}
+    .nav-group{min-width:0}
+    .nav-heading{display:flex;justify-content:space-between;align-items:center;gap:6px;font-size:11px;text-transform:uppercase;letter-spacing:.04em;margin:0 0 6px;color:var(--muted)}
+    .section-link{display:flex;justify-content:space-between;align-items:center;gap:6px;border-radius:6px;padding:7px 6px;color:var(--text);text-decoration:none;font-size:12px;overflow-wrap:anywhere}
+    .section-link:hover{background:var(--hover)}
+    .section-link[aria-current="page"]{background:var(--panel-2);color:var(--cyan);box-shadow:inset 2px 0 var(--cyan)}
+    .nav-count{font-size:10px;max-width:55%;white-space:normal;text-align:right;flex-shrink:0}
+    .section-total{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 18px;border-bottom:1px solid var(--line-soft)}
+    .panel-handoffs,.panel-notes-unavailable{margin:0}
+    .dashboard-content .panel[data-section-active="true"]{border-color:var(--cyan)}
+    @media(max-width:760px){
+      .dashboard-layout{grid-template-columns:1fr}
+      .section-nav{position:static;max-height:none;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+      .dashboard-content [data-section][data-section-active="false"]{display:none!important}
+      .dashboard-content .col-feed{max-height:none;overflow:visible}
+    }
+    @keyframes activity-ripple{0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--cyan) 35%,transparent)}100%{box-shadow:0 0 0 10px transparent}}
+    @keyframes task-arrival{from{transform:translateX(-12px);background:color-mix(in srgb,var(--cyan) 22%,var(--panel))}to{transform:translateX(0);background:var(--panel)}}
+    @media(prefers-reduced-motion:no-preference){
+      body,.panel,.board-column,.column-heading,.message,.heartbeat,.timeline-entry,input,textarea,select,dialog{transition:background-color .25s ease,color .25s ease,border-color .25s ease,box-shadow .25s ease}
+      .event-ripple{animation:activity-ripple .9s ease-out}
+      .task-changed{animation:task-arrival .8s ease-out}
+    }
+    @media(max-width:480px){
+      .dashboard-tools{padding:12px}
+      .tool-row>*{max-width:100%}
+      .tool-row select{flex:1 1 130px;width:0}
+      .search-field{flex-basis:100%}
+      #saved-view-name{max-width:none;width:0}
+      .timeline-track{padding:14px;gap:10px}
+      .timeline-entry{flex-basis:230px}
+      .legend{flex-wrap:wrap}
+    }
     @container(max-width:860px){.board{grid-template-columns:repeat(2,minmax(0,1fr))}}
     @container(max-width:460px){.board{grid-template-columns:1fr}}
     @media(max-width:1280px){
@@ -260,13 +327,55 @@
       </form>
     </section>
     <p id="action-status" class="action-status" role="status" aria-live="polite" hidden></p>
+    <section id="dashboard-tools" class="panel dashboard-tools" aria-label="Dashboard tools" hidden>
+      <div class="tool-row">
+        <label class="search-field" for="global-search">Search everything on this page
+          <input id="global-search" type="search" placeholder="Tasks, messages, notes, handoffs, huddles, questions…" autocomplete="off" maxlength="200" aria-controls="search-results" aria-describedby="search-scope">
+        </label>
+        <div class="view-switch" aria-label="Task view">
+          <button id="board-view" type="button" aria-pressed="true">Board</button>
+          <button id="timeline-view" type="button" aria-pressed="false">Timeline</button>
+        </div>
+        <button id="shortcut-help" type="button" aria-haspopup="dialog">Shortcuts ?</button>
+      </div>
+      <p id="search-scope" class="hint">Searches loaded data only. Notes and handoffs require home-server member access.</p>
+      <p id="search-status" class="meta" role="status" aria-live="polite"></p>
+      <ul id="search-results" class="search-results" aria-label="Search results" hidden></ul>
+      <div class="tool-row">
+        <label for="task-filter">Tasks</label>
+        <select id="task-filter"><option value="all">All tasks</option><option value="mine">My open tasks</option><option value="blocked">Blocked</option><option value="done-today">Done today</option></select>
+        <label for="saved-views">Saved views</label><select id="saved-views"><option value="">Choose a view</option></select>
+        <input id="saved-view-name" type="text" maxlength="40" placeholder="View name (not an access key)" aria-label="Saved view name" autocomplete="off">
+        <button id="save-view" type="button">Save view</button><button id="delete-view" type="button" disabled>Delete view</button>
+      </div>
+      <div class="tool-row">
+        <button id="notify-toggle" type="button" aria-pressed="false">Enable notifications</button>
+        <span id="notify-status" class="meta" role="status">Off · only new questions and assignments for you</span>
+        <button id="export-transcript" type="button">Export transcript .md</button>
+        <button id="export-board" type="button">Export board .md</button>
+      </div>
+      <div><div class="panel-label">Working now</div><div id="working-list" class="working-list"></div></div>
+    </section>
+    <dialog id="shortcuts" aria-labelledby="shortcuts-title">
+      <h2 id="shortcuts-title">Keyboard shortcuts</h2>
+      <dl><dt><kbd>/</kbd></dt><dd>Focus global search</dd><dt><kbd>j</kbd></dt><dd>Next visible card</dd><dt><kbd>k</kbd></dt><dd>Previous visible card</dd><dt><kbd>[</kbd></dt><dd>Previous section group</dd><dt><kbd>]</kbd></dt><dd>Next section group</dd><dt><kbd>?</kbd></dt><dd>Show this list</dd><dt><kbd>Esc</kbd></dt><dd>Close this list or leave search</dd></dl>
+      <p class="hint">Shortcuts do not run while typing in a field.</p><button id="close-shortcuts" type="button">Close</button>
+    </dialog>
+    <div id="dashboard-layout" class="dashboard-layout" hidden>
+      <nav id="section-nav" class="panel section-nav" aria-label="Dashboard sections"></nav>
+      <div class="dashboard-content">
+    <section id="timeline-panel" class="panel timeline-panel" aria-labelledby="timeline-title" hidden>
+      <div class="panel-heading"><div><div class="panel-label">Tasks + messages · oldest first</div><h2 id="timeline-title">Timeline</h2></div><span id="timeline-count" class="count">0</span></div>
+      <p id="timeline-hint" class="hint filter-hint">Task creation, latest update and loaded task events only; not a complete status history. Scroll horizontally to explore.</p>
+      <div id="timeline-track" class="timeline-track" tabindex="0" aria-label="Tasks and messages by time"></div>
+    </section>
     <section id="asks" class="asks" aria-labelledby="asks-title" hidden>
       <h2 id="asks-title">Waiting on the team</h2><ul id="asks-list"></ul>
       <p id="asks-hint" class="hint">Respond to questions, ideas and votes below or from your agent session.</p>
     </section>
     <main id="workspace" class="workspace" hidden>
       <aside class="col col-team" aria-label="Team and coordination">
-        <section class="panel panel-team" aria-labelledby="team-title">
+        <section id="members-panel" class="panel panel-team" aria-labelledby="team-title">
           <div class="panel-heading"><h2 id="team-title">Team status</h2><span id="team-count" class="count">2 agents</span></div>
           <ul id="members" class="members"></ul>
           <div id="team-invite" class="invite" hidden>
@@ -274,58 +383,71 @@
             <div id="invite-box" hidden><label for="invite-url" class="hint">Team join link</label><input id="invite-url" type="text" readonly><button id="invite-copy" type="button">Copy</button><p id="invite-exp" class="hint"></p></div>
           </div>
         </section>
-        <section class="panel panel-rules" aria-labelledby="rules-title">
-          <div class="panel-heading"><h2 id="rules-title">Coordination guide</h2></div><dl id="rules" class="rules"></dl>
+        <section id="rules-panel" class="panel panel-rules" aria-labelledby="rules-title">
+          <div class="panel-heading"><h2 id="rules-title">Coordination guide</h2><span id="rules-count" class="count" title="Coordination guide and house rules combined">0</span></div><dl id="rules" class="rules"></dl>
         </section>
         <section id="house-rules-panel" class="panel panel-rules" aria-labelledby="house-rules-title" hidden>
           <div class="panel-heading"><h2 id="house-rules-title">House rules</h2></div><dl id="house-rules" class="rules"></dl>
           <p class="hint invite">The team owner changes these by telling their agent.</p>
         </section>
-        <section class="panel panel-claims" aria-labelledby="claims-title">
+        <section id="claims-panel" class="panel panel-claims" aria-labelledby="claims-title">
           <div class="panel-heading"><div><div class="panel-label">30-minute reservations</div><h2 id="claims-title">File claims</h2></div><span id="claim-count" class="count">0</span></div>
           <div id="claims" class="items" tabindex="0" aria-label="Active file claims"></div>
           <div id="claim-create" hidden></div>
         </section>
-        <section class="panel panel-questions" aria-labelledby="questions-title">
+        <section id="questions-panel" class="panel panel-questions" aria-labelledby="questions-title">
           <div class="panel-heading"><h2 id="questions-title">Questions</h2><span id="question-count" class="count">0</span></div>
           <div id="questions" class="items" tabindex="0" aria-label="Questions and answers"></div>
           <div id="question-create" hidden></div>
         </section>
       </aside>
       <div id="coordination" class="col col-work" aria-label="Project coordination" hidden>
-        <section class="panel panel-board" aria-labelledby="tasks-title">
+        <section id="board-panel" class="panel panel-board" aria-labelledby="tasks-title">
           <div class="panel-heading"><div><div class="panel-label">Owners · dependencies · contracts</div><h2 id="tasks-title">Task board</h2></div><span id="task-count" class="count">0</span></div>
           <div id="tasks" class="board" aria-label="Task board"></div>
+          <p id="filter-status" class="hint filter-hint" role="status" aria-live="polite" hidden></p>
         </section>
-        <section class="panel panel-huddles" aria-labelledby="huddles-title">
+        <section id="huddles-panel" class="panel panel-huddles" aria-labelledby="huddles-title">
           <div class="panel-heading"><div><div class="panel-label">Ideas · feedback · decisions</div><h2 id="huddles-title">Huddles</h2></div><span id="huddle-count" class="count">0</span></div>
           <div id="huddles"><div id="huddle-create" hidden></div><div class="items"><div id="huddle-list"></div><div id="huddle-view" hidden></div></div></div>
         </section>
-        <section class="panel panel-prompt" aria-labelledby="master-title">
+        <section id="plans-panel" class="panel panel-prompt" aria-labelledby="master-title">
           <div class="panel-heading"><div><div class="panel-label">Shared project description</div><h2 id="master-title">Master prompt</h2></div><span id="prompt-badge" class="badge">Draft</span></div>
           <div id="master"><div class="empty">No shared project description yet.</div></div>
           <div class="panel-heading"><span class="meta">Sections · revision history · votes</span><span id="master-count" class="count">0</span></div>
         </section>
-        <section class="panel panel-messages" aria-labelledby="messages-title">
+        <section id="transcript-panel" class="panel panel-messages" aria-labelledby="messages-title">
           <div class="panel-heading"><div><div class="panel-label">The conversation</div><h2 id="messages-title">Live transcript</h2></div><span id="message-count" class="count">0</span></div>
           <div id="messages" class="messages" tabindex="0" aria-label="Agent message timeline"></div>
         </section>
+        <section id="notes-unavailable" class="panel panel-notes-unavailable" aria-labelledby="notes-unavailable-title">
+          <div class="panel-heading"><h2 id="notes-unavailable-title">Notes</h2><span id="notes-unavailable-count" class="count">Unavailable</span></div>
+          <p class="hint invite">Notes require home-server member access; no notes data is available in this session.</p>
+        </section>
+        <section id="handoffs-panel" class="panel panel-handoffs" aria-labelledby="handoffs-title">
+          <div class="panel-heading"><h2 id="handoffs-title">Handoffs</h2><span id="handoff-count" class="count">Unavailable</span></div>
+          <div id="handoffs-list" class="items" aria-label="Loaded task handoffs"></div>
+          <div class="invite"><button id="handoffs-board" type="button">Open task board to leave a handoff</button></div>
+        </section>
       </div>
       <aside class="col col-feed" aria-label="Live activity">
-        <section class="panel panel-feed" aria-labelledby="news-title">
+        <section id="activity-panel" class="panel panel-feed" aria-labelledby="news-title">
           <div class="panel-heading"><div><div class="panel-label">Team news · newest first</div><h2 id="news-title">Live feed</h2></div><span id="news-count" class="count">0</span></div>
+          <div class="section-total"><span class="meta">Activity · feed + audit</span><span id="activity-count" class="count">0</span></div>
           <div id="news" class="items" tabindex="0" aria-label="Live team news feed"></div>
         </section>
-        <section class="panel panel-patches" aria-labelledby="patches-title">
+        <section id="patches-panel" class="panel panel-patches" aria-labelledby="patches-title">
           <div class="panel-heading"><div><div class="panel-label">Metadata only</div><h2 id="patches-title">Patches</h2></div><span id="patch-count" class="count">0</span></div>
           <div id="patches" class="items" tabindex="0" aria-label="Patch metadata list"></div>
         </section>
-        <section class="panel panel-audit" aria-labelledby="audit-title">
+        <section id="audit-panel" class="panel panel-audit" aria-labelledby="audit-title">
           <div class="panel-heading"><div><div class="panel-label">Latest 200 · 7-day retention</div><h2 id="audit-title">Message activity</h2></div><span id="audit-count" class="count">0</span></div>
           <div id="audit" class="items" tabindex="0" aria-label="Message action history"></div>
         </section>
       </aside>
     </main>
+      </div>
+    </div>
   </div>
   <script nonce="__AGENTMESH_NONCE__">
     (() => {
@@ -335,16 +457,9 @@
         set(key, value) { try { localStorage.setItem(key, value); } catch {} },
         remove(key) { try { localStorage.removeItem(key); } catch {} }
       };
-      const sessionStore = {
-        get() {
-          try {
-            const saved = JSON.parse(sessionStorage.getItem("agentmesh:session"));
-            return typeof saved?.key === "string" && saved.key && ["member", "agent", "auto"].includes(saved.mode) ? saved : null;
-          } catch { return null; }
-        },
-        set(key, mode) { try { sessionStorage.setItem("agentmesh:session", JSON.stringify({ key, mode })); } catch {} },
-        clear() { try { sessionStorage.removeItem("agentmesh:session"); } catch {} }
-      };
+      // Authentication lives only in an HttpOnly cookie; discard old tab credentials.
+      try { sessionStorage.removeItem("agentmesh:session"); } catch {}
+      for (const name of ["agentmesh-viewer", "agentmesh-agent", "agentmesh-access-mode"]) storage.remove(name);
       const element = (tag, className, value) => {
         const node = document.createElement(tag);
         if (className) node.className = className;
@@ -360,9 +475,10 @@
       const setStatus = (text, state = "") => {
         get("connection-status").textContent = text;
         get("connection-status").className = "status meta" + (state ? " " + state : "");
+        sectionNav.refresh();
       };
       const empty = (container, text) => container.append(element("p", "empty", text));
-      let key = "", lastEventId = 0, session = 0, timer = null, controller = null;
+      let authenticated = false, lastEventId = 0, session = 0, timer = null, controller = null, authBusy = false;
       let rendered = {}, snapshot = null, teamSnapshot = null, selectedHuddle = null;
       let accessMode = "auto", me = null, writing = false, writeController = null;
       const drafts = new Map(), editingSections = new Set();
@@ -386,7 +502,7 @@
         const task = snapshot && snapshot.tasks.find((row) => row.id === id);
         return shortId(id) + (task ? " · " + task.title : "");
       };
-      const canWrite = () => agents.includes(me) && Boolean(key);
+      const canWrite = () => agents.includes(me) && authenticated;
       const routeId = (id) => encodeURIComponent(id);
       const fieldId = (kind, id) => kind + "-" + encodeURIComponent(id);
       function actionStatus(message = "", error = false) {
@@ -477,7 +593,7 @@
         actionStatus("Saving…");
         try {
           const response = await fetch(path, {
-            method: "POST", headers: { Authorization: "Bearer " + key, "Content-Type": "application/json" },
+            method: "POST", headers: { "Content-Type": "application/json" }, credentials: "same-origin",
             body: JSON.stringify(body), cache: "no-store", signal: requestController.signal
           });
           if (session !== currentSession) return;
@@ -531,6 +647,439 @@
         }
       }
 
+      const itemId = (kind, id) => "item-" + kind + "-" + encodeURIComponent(id);
+      function identify(node, kind, id) {
+        node.id = itemId(kind, id);
+        node.tabIndex = -1;
+        node.dataset.focus = node.id;
+        return node;
+      }
+      const sectionNav = (() => {
+        const groups = [
+          ["Work", [["board", "Board", "task-count", ["board-panel"]], ["timeline", "Timeline", "timeline-count", ["timeline-panel"]], ["plans", "Plans / Master prompt", "master-count", ["plans-panel"]], ["claims", "Claims", "claim-count", ["claims-panel"]]]],
+          ["Conversation", [["transcript", "Transcript", "message-count", ["transcript-panel", "asks"]], ["questions", "Questions", "question-count", ["questions-panel"]], ["huddles", "Huddles", "huddle-count", ["huddles-panel"]]]],
+          ["Knowledge", [["notes", "Notes", "team-notes-count", ["team-notes-panel", "notes-unavailable"]], ["handoffs", "Handoffs", "handoff-count", ["handoffs-panel"]], ["patches", "Patches", "patch-count", ["patches-panel"]]]],
+          ["Team and activity", [["members", "Members and presence", "team-count", ["members-panel"]], ["activity", "Activity", "activity-count", ["activity-panel", "audit-panel"]], ["rules", "Team rules", "rules-count", ["rules-panel", "house-rules-panel"]]]]
+        ];
+        const entries = groups.flatMap(([, rows]) => rows), links = new Map(), badges = new Map();
+        const sectionKey = "agentmesh:current-section";
+        let current = storage.get(sectionKey), handoffSignature = null;
+        if (!entries.some(([id]) => id === current)) current = "board";
+        const put = (node, value) => { const text = String(value); if (node && node.textContent !== text) node.textContent = text; };
+        for (const [index, [name, rows]] of groups.entries()) {
+          const group = element("section", "nav-group"), heading = element("h2", "nav-heading");
+          heading.id = "nav-group-" + index;
+          group.setAttribute("aria-labelledby", heading.id);
+          heading.append(element("span", "", name));
+          const count = element("span", "count group-count", rows.length);
+          count.setAttribute("aria-label", rows.length + " sections"); heading.append(count); group.append(heading);
+          for (const [id, label, , targets] of rows) {
+            const link = element("a", "section-link"), badge = element("span", "count nav-count", "0");
+            link.href = "#" + targets[0]; link.dataset.section = id; link.setAttribute("data-section-link", "");
+            link.setAttribute("aria-controls", targets.join(" "));
+            link.append(element("span", "", label), badge);
+            link.addEventListener("click", event => { event.preventDefault(); select(id, true); });
+            links.set(id, link); badges.set(id, badge); group.append(link);
+          }
+          get("section-nav").append(group);
+        }
+        function apply() {
+          for (const [id, , , targets] of entries) {
+            const link = links.get(id);
+            const nodes = targets.map(get).filter(Boolean), target = nodes.find(node => !node.hidden) || nodes[0];
+            if (target) link.href = "#" + target.id;
+            link.setAttribute("aria-controls", nodes.map(node => node.id).join(" "));
+            if (id === current) link.setAttribute("aria-current", "page"); else link.removeAttribute("aria-current");
+            for (const target of targets) {
+              const node = get(target);
+              if (node) {
+                node.dataset.section = id; node.dataset.sectionActive = String(id === current);
+                if (node.className.split(/\s+/).includes("panel")) node.tabIndex = -1;
+              }
+            }
+          }
+        }
+        function refresh() {
+          const notes = get("team-notes-panel"), available = Boolean(notes && !notes.hidden);
+          get("notes-unavailable").hidden = available;
+          const sources = Array.from(get("tasks").querySelectorAll(".task-handoff"));
+          const signature = JSON.stringify([available, sources.map(node => [node.dataset.handoffId, node.textContent, node.parentElement?.dataset.taskKey])]);
+          if (signature !== handoffSignature) {
+            const list = get("handoffs-list"); list.replaceChildren();
+            for (const source of sources) {
+              const taskKey = source.parentElement?.dataset.taskKey || "Task", row = element("article", "item handoff-summary");
+              row.append(element("h3", "item-title", taskKey), element("p", "description", source.textContent));
+              const button = element("button", "", "Open " + taskKey + " handoff and actions"); button.type = "button";
+              button.addEventListener("click", () => enhancements.reveal("handoff", source.dataset.handoffId)); row.append(button); list.append(row);
+            }
+            if (!sources.length) empty(list, available ? "No handoffs recorded on the loaded tasks. Use the task board to leave one." : "Handoffs unavailable: home-server member data is required.");
+            handoffSignature = signature;
+          }
+          put(get("handoff-count"), available || sources.length ? sources.length : "Unavailable");
+          get("handoffs-board").disabled = !available;
+          const feed = Number(get("news-count").textContent) || 0, audit = Number(get("audit-count").textContent) || 0;
+          put(get("activity-count"), feed + audit);
+          put(get("rules-count"), get("rules").querySelectorAll(".rule").length + (get("house-rules-panel").hidden ? 0 : get("house-rules").querySelectorAll(".rule").length));
+          for (const [id, , countId] of entries) {
+            const source = id === "notes" && !available ? get("notes-unavailable-count") : get(countId);
+            if (source && !source.textContent.trim()) put(source, "0");
+            put(badges.get(id), source?.textContent || "0");
+          }
+          apply();
+        }
+        function select(id, focus = false) {
+          const entry = entries.find(([value]) => value === id);
+          if (!entry) return;
+          current = id; storage.set(sectionKey, id);
+          enhancements.view(id === "timeline", false); refresh();
+          if (focus) {
+            const target = entry[3].map(get).find(node => node && !node.hidden);
+            target?.scrollIntoView?.({ block: "nearest", inline: "nearest" }); target?.focus({ preventScroll: true });
+          }
+        }
+        function move(direction) {
+          const index = groups.findIndex(([, rows]) => rows.some(([id]) => id === current));
+          const next = groups[(index + direction + groups.length) % groups.length][1][0][0];
+          select(next); links.get(next).focus();
+        }
+        function reset() {
+          get("dashboard-layout").hidden = true; get("handoffs-list").replaceChildren(); handoffSignature = null;
+          put(get("handoff-count"), "Unavailable"); put(get("activity-count"), "0"); put(get("rules-count"), "0");
+          for (const badge of badges.values()) put(badge, "0");
+        }
+        get("handoffs-board").addEventListener("click", () => select("board", true));
+        apply();
+        return { select, move, refresh, reset, open() { get("dashboard-layout").hidden = false; select(current); } };
+      })();
+      // One in-memory index shared by both existing access paths. No extra reads.
+      const enhancements = (() => {
+        let tasks = [], messages = [], questions = [], huddles = [], members = [], events = [];
+        let mine = null, memberMode = false, taskHistory = null, questionHistory = null, messageHistory = null, eventHistory = null;
+        let timeline = false, notifications = false, revision = 0, extraTimer = null;
+        const filters = ["all", "mine", "blocked", "done-today"], closed = ["done", "accepted", "cancelled"];
+        const viewsKey = "agentmesh:saved-views";
+        const ms = value => {
+          if (value == null || value === "") return null;
+          const number = Number(value);
+          const result = Number.isFinite(number) ? (number < 1e11 ? number * 1000 : number) : Date.parse(value);
+          return Number.isFinite(result) ? result : null;
+        };
+        const nameOf = id => members.find(row => row.id === id)?.name || id || "Unassigned";
+        const validName = name => typeof name === "string" && /^[\p{L}\p{N} _-]{1,40}$/u.test(name) && !/\S{25}/u.test(name);
+        let views = [];
+        try {
+          const saved = JSON.parse(storage.get(viewsKey));
+          if (Array.isArray(saved)) views = saved.filter(row => validName(row?.name) && filters.includes(row.filter)).slice(0, 12).map(row => ({ name: row.name, filter: row.filter }));
+        } catch {}
+        function renderViews(selected = "") {
+          const select = get("saved-views");
+          const placeholder = element("option", "", "Choose a view"); placeholder.value = "";
+          select.replaceChildren(placeholder);
+          for (const [index, view] of views.entries()) {
+            const option = element("option", "", view.name);
+            option.value = String(index); select.append(option);
+          }
+          select.value = selected;
+          get("delete-view").disabled = selected === "";
+        }
+        function ripple(node) {
+          if (!node) return;
+          node.className = node.className.replace(/\s*event-ripple/g, "") + " event-ripple";
+          node.addEventListener("animationend", () => { node.className = node.className.replace(/\s*event-ripple/g, ""); }, { once: true });
+        }
+        function notify(title, text, kind, id) {
+          if (!notifications || typeof Notification === "undefined" || Notification.permission !== "granted") return;
+          try {
+            const notice = new Notification("AgentMesh · " + title, { body: excerpt(text, 180), tag: kind + ":" + id });
+            const run = revision;
+            notice.onclick = () => { if (run === revision && authenticated) { window.focus(); reveal(kind, id); } notice.close(); };
+          } catch { get("notify-status").textContent = "Notifications unavailable in this browser; check the Questions and Task board panels."; }
+        }
+        function completion(row) {
+          const recorded = events.filter(event => event.kind === "task_done" && (event.data?.key || event.ref) === row.key).map(event => ms(event.created_at)).filter(value => value !== null);
+          return ms(row.completed_at ?? row.done_at) ?? (recorded.length ? Math.max(...recorded) : null);
+        }
+        function matches(row) {
+          const filter = get("task-filter").value || "all";
+          if (filter === "mine") return row.owner === mine && !closed.includes(row.status);
+          if (filter === "blocked") return row.status === "blocked" || (!closed.includes(row.status) && (row.ready === false || (row.ready == null && ((row.waiting_on || []).length || (row.depends_on || []).some(id => tasks.some(task => task.key === id && !["done", "accepted"].includes(task.status)))))));
+          if (filter === "done-today") {
+            const time = completion(row);
+            return ["done", "accepted"].includes(row.status) && time !== null && new Date(time).toDateString() === new Date().toDateString();
+          }
+          return true;
+        }
+        function applyFilters() {
+          let visible = 0;
+          for (const card of get("tasks").querySelectorAll(".task-card")) {
+            const task = tasks.find(row => row.key === card.dataset.taskKey);
+            card.hidden = Boolean(task && !matches(task));
+            if (!card.hidden) visible++;
+          }
+          const filter = get("task-filter").value || "all", status = get("filter-status");
+          const unknown = tasks.filter(row => ["done", "accepted"].includes(row.status) && completion(row) === null).length;
+          status.hidden = filter === "all";
+          status.textContent = visible + " of " + tasks.length + " tasks shown" + (filter === "done-today" && unknown ? " · Completion time unavailable for " + unknown + " completed tasks; not included." : "");
+        }
+        function documents() {
+          const list = [];
+          const add = (kind, id, title, body) => list.push({ kind, id, title: String(title || id), text: [id, title, body].join(" ") });
+          for (const row of tasks) add("task", row.key, row.key + " · " + row.title, [row.description, row.note, row.result, row.acceptance, row.acceptance_criteria, row.area, row.file_areas, row.depends_on, row.branch, row.status, nameOf(row.owner)].flat().join(" "));
+          for (const row of messages) add("message", row.id, row.sender + " → " + row.recipient, [row.text, row.task_id, row.kind].join(" "));
+          for (const row of questions) add("question", row.id, row.question || row.text, [row.answer, row.sender, row.recipient, nameOf(row.from_id), nameOf(row.to_id)].join(" "));
+          for (const row of huddles) add("huddle", row.id, row.topic, [row.context, row.proposal, row.decision, ...(row.posts || []).map(post => post.text), ...(row.ideas || []).map(idea => idea.text), get(itemId("huddle", row.id))?.textContent].join(" "));
+          for (const [selector, kind, attr] of [[".team-note", "note", "noteId"], [".task-handoff", "handoff", "handoffId"]]) {
+            for (const node of get("workspace").querySelectorAll(selector)) {
+              const id = node.dataset[attr];
+              identify(node, kind, id);
+              const title = node.querySelector(".item-title")?.textContent || node.querySelector(".description")?.textContent || kind;
+              // Do not index edit forms, draft fields, or credentials.
+              const text = Array.from(node.querySelectorAll(".description,.meta,.details-body")).map(part => part.textContent).join(" ");
+              add(kind, id, title, text);
+            }
+          }
+          return list;
+        }
+        function renderSearch() {
+          const query = get("global-search").value.trim().toLocaleLowerCase(), box = get("search-results");
+          const index = documents();
+          box.replaceChildren(); box.hidden = !query;
+          const notes = get("team-notes-panel");
+          get("search-scope").textContent = notes && !notes.hidden
+            ? "Searches loaded messages, tasks, questions, huddles, notes and handoffs only. Note-panel filters limit loaded notes."
+            : "Searches loaded messages, tasks, questions and huddles only. Notes and handoffs unavailable without home-server member data.";
+          if (!query) { get("search-status").textContent = ""; return; }
+          const terms = query.split(/\s+/), hits = index.filter(row => terms.every(term => row.text.toLocaleLowerCase().includes(term)));
+          get("search-status").textContent = hits.length + " results" + (hits.length > 100 ? " · showing first 100; refine your search" : "");
+          for (const row of hits.slice(0, 100)) {
+            const li = element("li"), link = element("a", "search-result", row.kind + " · " + excerpt(row.title, 180));
+            link.href = "#" + itemId(row.kind, row.id); link.dataset.kind = row.kind;
+            link.addEventListener("click", event => { event.preventDefault(); reveal(row.kind, row.id); });
+            li.append(link); box.append(li);
+          }
+          if (!hits.length) empty(box, "No matches in the loaded data.");
+        }
+        function reveal(kind, id) {
+          sectionNav.select({ task: "board", message: "transcript", question: "questions", huddle: "huddles", note: "notes", handoff: "board" }[kind] || "board");
+          const target = get(itemId(kind, id));
+          if (!target) { actionStatus("This item is no longer loaded. Refresh the relevant panel.", true); return; }
+          const card = kind === "task" ? target : target.closest(".task-card");
+          if (card?.hidden) { get("task-filter").value = "all"; applyFilters(); }
+          const parentDetails = target.closest("details");
+          if (parentDetails) parentDetails.open = true;
+          if (kind === "huddle" && target.closest("#huddle-list")?.hidden) {
+            const back = get("huddle-back"); if (back) back.click();
+          }
+          const current = get(itemId(kind, id)) || target;
+          current.scrollIntoView?.({ block: "center", behavior: "instant" });
+          current.focus(); ripple(current);
+        }
+        function renderTimeline() {
+          const track = get("timeline-track"), scroll = track.scrollLeft;
+          const active = track.contains(document.activeElement) ? document.activeElement?.dataset.focus : null;
+          const rows = [];
+          let missing = 0;
+          for (const row of tasks.filter(matches)) {
+            const created = ms(row.created_at), updated = ms(row.updated_at);
+            if (created !== null) rows.push({ kind: "task", id: row.key, time: created, title: row.key + " · Created", text: row.title });
+            if (updated !== null && updated !== created) rows.push({ kind: "task", id: row.key, time: updated, title: row.key + " · Latest update · " + words(row.status), text: row.title });
+            if (created === null && updated === null) missing++;
+          }
+          for (const event of events.filter(row => String(row.kind).startsWith("task_"))) {
+            const id = event.data?.key || event.ref, time = ms(event.created_at), task = tasks.find(row => row.key === id);
+            if (task && matches(task) && time !== null) rows.push({ kind: "task", id, time, title: id + " · " + words(event.kind), text: task.title });
+          }
+          for (const row of messages) {
+            const time = ms(row.created_at);
+            if (time === null) { missing++; continue; }
+            rows.push({ kind: "message", id: row.id, time, title: row.sender + " → " + row.recipient, text: row.text });
+          }
+          rows.sort((a, b) => a.time - b.time);
+          get("timeline-count").textContent = String(rows.length);
+          sectionNav.refresh();
+          if (!timeline) return;
+          track.replaceChildren();
+          for (const row of rows) {
+            const card = element("article", "timeline-entry" + (row.kind === "task" ? " task-event" : ""));
+            card.tabIndex = -1; card.dataset.focus = "timeline:" + row.kind + ":" + row.id + ":" + row.time;
+            const time = element("time", "meta", new Date(row.time).toLocaleString()); time.dateTime = new Date(row.time).toISOString();
+            const link = element("a", "", row.title); link.href = "#" + itemId(row.kind, row.id);
+            link.addEventListener("click", event => { event.preventDefault(); reveal(row.kind, row.id); });
+            card.append(time, element("p", "card-title", row.kind), link, element("p", "", excerpt(row.text, 300))); track.append(card);
+          }
+          if (!rows.length) empty(track, "No timestamped tasks or messages in the loaded data.");
+          track.scrollLeft = scroll;
+          if (active) Array.from(track.querySelectorAll("[data-focus]")).find(node => node.dataset.focus === active)?.focus({ preventScroll: true });
+          get("timeline-count").textContent = String(rows.length);
+          get("timeline-hint").textContent = "Task creation, latest update and loaded task events only; not a complete status history. Scroll horizontally to explore." + (missing ? " Time unavailable for " + missing + " items; not plotted." : "");
+        }
+        function switchView(showTimeline, syncSection = true) {
+          timeline = showTimeline;
+          get("timeline-panel").hidden = !timeline;
+          get("tasks").hidden = timeline;
+          get("board-view").setAttribute("aria-pressed", String(!timeline));
+          get("timeline-view").setAttribute("aria-pressed", String(timeline));
+          renderTimeline();
+          if (syncSection) sectionNav.select(showTimeline ? "timeline" : "board");
+        }
+        function working() {
+          const box = get("working-list"); box.replaceChildren();
+          const people = memberMode ? members : agents.map(id => ({ id, name: id }));
+          if (accessMode !== "member") {
+            const heartbeats = get("member-heartbeats"); heartbeats.replaceChildren(); heartbeats.hidden = false;
+            for (const member of people) {
+              const seen = ms(member.last_seen), age = seen === null ? null : Math.max(0, Date.now() - seen);
+              const state = age === null ? "unavailable" : age <= 120000 ? "online" : age <= 900000 ? "away" : "offline";
+              const chip = element("span", "heartbeat", member.name + " · " + (state === "unavailable" ? "heartbeat unavailable" : state));
+              chip.dataset.memberId = member.id; chip.dataset.state = state; heartbeats.append(chip);
+            }
+          }
+          for (const member of people) {
+            const current = tasks.filter(row => row.owner === member.id && row.status === "in_progress");
+            const lastSeen = ms(member.last_seen), online = lastSeen !== null && Date.now() - lastSeen <= 120000;
+            const activity = member.status?.activity;
+            const text = member.name + " · " + (current.length ? current.map(row => row.key + " · " + row.title).join("; ") : activity || "No in-progress task recorded") + (memberMode ? online ? " · recent heartbeat" : " · heartbeat stale or unavailable" : " · heartbeat unavailable");
+            const chip = element("div", "working-chip", text); chip.dataset.active = String(online && Boolean(activity || current.length)); box.append(chip);
+          }
+          for (const chip of get("member-heartbeats").querySelectorAll(".heartbeat")) {
+            const member = members.find(row => row.id === chip.dataset.memberId);
+            chip.dataset.active = String(chip.dataset.state === "online" && Boolean(member?.status?.activity || tasks.some(row => row.owner === member?.id && row.status === "in_progress")));
+          }
+        }
+        function changed() { applyFilters(); renderSearch(); renderTimeline(); working(); }
+        function board(rows, team, positions) {
+          memberMode = Boolean(team);
+          members = team?.members || []; mine = team?.me?.id || me;
+          tasks = rows.map(row => ({ ...row, key: row.key || row.id, status: row.dashboard_status || row.status, owner: team ? row.assignee_id || row.proposed_id : row.assignee || row.owner }));
+          const next = new Map(tasks.map(row => [row.key, row]));
+          for (const row of tasks) {
+            const previous = taskHistory?.get(row.key), node = get(itemId("task", row.key));
+            if (taskHistory && row.owner === mine && ["assigned", "proposed", "in_progress"].includes(row.status) && (!previous || previous.owner !== mine || !["assigned", "proposed", "in_progress"].includes(previous.status))) notify("Task assigned", row.key + " · " + row.title, "task", row.key);
+            if (node && previous && previous.status !== row.status) {
+              node.className += " task-changed";
+              node.addEventListener("animationend", () => { node.className = node.className.replace(/\s*task-changed/g, ""); }, { once: true });
+              const before = positions?.get(row.key), after = node.getBoundingClientRect?.();
+              if (before && after && node.animate && typeof matchMedia !== "undefined" && !matchMedia("(prefers-reduced-motion: reduce)").matches) node.animate([
+                { transform: `translate(${before.left - after.left}px,${before.top - after.top}px)` }, { transform: "translate(0,0)" }
+              ], { duration: 450, easing: "ease-out" });
+              ripple(get("member-heartbeats"));
+            }
+          }
+          taskHistory = next; changed();
+        }
+        function setMessages(rows) {
+          const next = new Set(rows.map(row => row.id));
+          if (messageHistory) for (const row of rows) if (!messageHistory.has(row.id)) {
+            ripple(get(itemId("message", row.id))); ripple(get("member-heartbeats"));
+          }
+          messageHistory = next; messages = rows; renderSearch(); renderTimeline();
+        }
+        function setQuestions(rows) {
+          if (questionHistory) for (const row of rows) if (!questionHistory.has(row.id) && (row.to_id || row.recipient) === mine && row.answer == null && !row.answered_at) notify("Question for you", row.question || row.text, "question", row.id);
+          questionHistory = new Set(rows.map(row => row.id)); questions = rows; renderSearch();
+        }
+        function setEvents(rows) {
+          if (eventHistory && rows.some(row => !eventHistory.has(row.id) && (/^task_/.test(row.kind) || ["message_sent", "message", "ask", "reply", "update"].includes(row.kind)))) ripple(get("member-heartbeats"));
+          eventHistory = new Set(rows.map(row => row.id)); events = rows; applyFilters(); renderTimeline();
+        }
+        function reset() {
+          revision++; notifications = false; tasks = []; messages = []; questions = []; huddles = []; members = []; events = [];
+          mine = null; memberMode = false; taskHistory = questionHistory = messageHistory = eventHistory = null;
+          if (extraTimer !== null) clearTimeout(extraTimer); extraTimer = null;
+          get("dashboard-tools").hidden = true; get("global-search").value = ""; get("saved-view-name").value = "";
+          get("task-filter").value = "all"; get("search-results").replaceChildren(); get("search-results").hidden = true;
+          get("search-status").textContent = ""; get("working-list").replaceChildren(); get("timeline-track").replaceChildren();
+          get("filter-status").hidden = true; get("notify-toggle").textContent = "Enable notifications"; get("notify-toggle").setAttribute("aria-pressed", "false");
+          get("notify-status").textContent = "Off · only new questions and assignments for you";
+          closeHelp(); switchView(false, false); renderViews(); sectionNav.reset();
+        }
+        const md = value => String(value ?? "").replace(/[\\`*_{}\[\]<>()#!|~]/g, "\\$&");
+        function download(kind) {
+          const lines = ["# AgentMesh " + (kind === "board" ? "task board" : "transcript"), "", "Loaded snapshot exported " + new Date().toISOString() + ".", ""];
+          if (kind === "board") for (const row of tasks) lines.push("## " + md(row.key) + " · " + md(row.title), "", "Status: " + md(words(row.status)), "Assignee: " + md(nameOf(row.owner)), "", md(row.description), "", md(row.note || row.result), "");
+          else for (const row of messages) lines.push("## " + md(row.sender) + " → " + md(row.recipient), "", md(timestamp(ms(row.created_at))), ...(row.task_id ? ["Task: " + md(row.task_id)] : []), "", md(row.text), "");
+          if (!(kind === "board" ? tasks : messages).length) lines.push("No loaded data available.");
+          const url = URL.createObjectURL(new Blob([lines.join("\n")], { type: "text/markdown;charset=utf-8" }));
+          const link = element("a"); link.href = url; link.download = "agentmesh-" + kind + "-" + new Date().toISOString().slice(0, 10) + ".md";
+          link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+        }
+        get("global-search").addEventListener("input", renderSearch);
+        get("task-filter").addEventListener("change", () => { get("saved-views").value = ""; get("delete-view").disabled = true; applyFilters(); renderTimeline(); });
+        get("board-view").addEventListener("click", () => switchView(false));
+        get("timeline-view").addEventListener("click", () => switchView(true));
+        get("save-view").addEventListener("click", () => {
+          const name = get("saved-view-name").value.trim();
+          if (!validName(name)) { actionStatus("Use a short view name (letters, numbers, spaces, - or _), never an access key.", true); return; }
+          const view = { name, filter: get("task-filter").value || "all" }, index = views.findIndex(row => row.name === name);
+          if (index < 0 && views.length >= 12) { actionStatus("Up to 12 views can be saved. Delete one first.", true); return; }
+          if (index >= 0) views[index] = view; else views.push(view);
+          storage.set(viewsKey, JSON.stringify(views)); renderViews(String(index >= 0 ? index : views.length - 1));
+          get("saved-view-name").value = ""; actionStatus("View saved on this browser. Only its name and task filter are stored.");
+        });
+        get("saved-views").addEventListener("change", () => {
+          const value = get("saved-views").value, view = value === "" ? null : views[Number(value)];
+          get("delete-view").disabled = !view;
+          if (view) { get("task-filter").value = view.filter; applyFilters(); renderTimeline(); }
+        });
+        get("delete-view").addEventListener("click", () => {
+          const value = get("saved-views").value;
+          if (value === "") return;
+          views.splice(Number(value), 1); storage.set(viewsKey, JSON.stringify(views)); renderViews();
+        });
+        get("notify-toggle").addEventListener("click", async () => {
+          if (notifications) {
+            notifications = false; get("notify-toggle").textContent = "Enable notifications"; get("notify-toggle").setAttribute("aria-pressed", "false"); get("notify-status").textContent = "Off"; return;
+          }
+          if (typeof Notification === "undefined" || !window.isSecureContext) { get("notify-status").textContent = "Browser notifications unavailable here; a supported secure browser is required."; return; }
+          const run = revision;
+          try {
+            const permission = await Notification.requestPermission();
+            if (run !== revision) return;
+            notifications = permission === "granted";
+            get("notify-toggle").textContent = notifications ? "Disable notifications" : "Enable notifications";
+            get("notify-toggle").setAttribute("aria-pressed", String(notifications));
+            get("notify-status").textContent = notifications ? "On · new questions and assignments for you in this tab" : "Permission not granted · check browser settings to enable";
+          } catch { if (run === revision) get("notify-status").textContent = "Notification permission could not be requested."; }
+        });
+        get("export-board").addEventListener("click", () => download("board"));
+        get("export-transcript").addEventListener("click", () => download("transcript"));
+        const openHelp = () => { const dialog = get("shortcuts"); if (dialog.showModal) dialog.showModal(); else dialog.setAttribute("open", ""); };
+        const closeHelp = () => { const dialog = get("shortcuts"); if (dialog.close) dialog.close(); else dialog.removeAttribute("open"); };
+        get("shortcut-help").addEventListener("click", openHelp);
+        get("close-shortcuts").addEventListener("click", closeHelp);
+        document.addEventListener("keydown", event => {
+          if (get("dashboard-tools").hidden || event.ctrlKey || event.metaKey || event.altKey || event.isComposing) return;
+          if (event.key === "Escape" && document.activeElement === get("global-search")) { get("global-search").blur(); return; }
+          if (get("shortcuts").open) { if (event.key === "Escape") closeHelp(); return; }
+          if (["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement?.tagName) || document.activeElement?.isContentEditable) return;
+          if (event.key === "/") { event.preventDefault(); get("global-search").focus(); }
+          if (event.key === "?") { event.preventDefault(); openHelp(); }
+          if (["[", "]"].includes(event.key)) { event.preventDefault(); sectionNav.move(event.key === "[" ? -1 : 1); }
+          if (["j", "k"].includes(event.key)) {
+            const selector = timeline ? ".timeline-entry" : ".task-card,.message,.team-note,.task-handoff,#questions .item,#huddle-list .huddle";
+            const cards = Array.from(document.querySelectorAll(selector)).filter(node => (node.getClientRects ? node.getClientRects().length : !node.hidden) && !node.closest("[hidden]"));
+            if (!cards.length) return;
+            event.preventDefault();
+            const exact = cards.indexOf(document.activeElement);
+            const current = exact >= 0 ? exact : cards.findIndex(node => node.contains(document.activeElement));
+            const next = current < 0 ? event.key === "j" ? 0 : cards.length - 1 : (current + (event.key === "j" ? 1 : -1) + cards.length) % cards.length;
+            cards[next].focus(); cards[next].scrollIntoView?.({ block: "nearest", inline: "nearest" });
+          }
+        });
+        // Home-only extensions render into the same workspace after data refresh.
+        if (typeof MutationObserver !== "undefined") new MutationObserver(() => {
+          if (get("dashboard-tools").hidden) return;
+          clearTimeout(extraTimer);
+          extraTimer = setTimeout(() => { extraTimer = null; renderSearch(); sectionNav.refresh(); }, 80);
+        }).observe(get("workspace"), { childList: true, subtree: true, characterData: true });
+        renderViews();
+        return {
+          reset, board, reveal, view: switchView, messages: setMessages, questions: setQuestions, events: setEvents,
+          huddles(rows) { huddles = rows; renderSearch(); },
+          positions() { return new Map(Array.from(get("tasks").querySelectorAll(".task-card"), node => [node.dataset.taskKey, node.getBoundingClientRect?.()])); }
+        };
+      })();
+
       function updateThemeButton() {
         const dark = document.documentElement.getAttribute("data-theme") === "dark";
         get("theme-toggle").textContent = dark ? "Light theme" : "Dark theme";
@@ -547,6 +1096,7 @@
       function stopSession() {
         session += 1;
         hub.stop();
+        enhancements.reset();
         if (timer !== null) clearInterval(timer);
         timer = null;
         if (controller) controller.abort();
@@ -554,7 +1104,7 @@
         if (writeController) writeController.abort();
         writeController = null;
         writing = false;
-        key = "";
+        authenticated = false;
         me = null;
         drafts.clear();
         editingSections.clear();
@@ -566,7 +1116,7 @@
       }
       function showAuth(message = "", focus = false) {
         stopSession();
-        sessionStore.clear();
+        setAuthBusy(false);
         storage.remove("agentmesh-viewer");
         storage.remove("agentmesh-access-mode");
         get("member-heartbeats").replaceChildren();
@@ -600,7 +1150,7 @@
         setStatus(message ? "Access denied · enter a member key or agent token" : "Access key required", message ? "warning" : "");
         if (focus) get("access-key").focus();
       }
-      get("sign-out").addEventListener("click", () => showAuth("", true));
+      get("sign-out").addEventListener("click", signOut);
 
       function renderMessages(rows) {
         const container = get("messages");
@@ -609,6 +1159,7 @@
         const fragment = document.createDocumentFragment();
         for (const row of rows) {
           const card = element("article", "message" + (row.sender === "agent-b" ? " from-b" : ""));
+          identify(card, "message", row.id);
           const heading = element("div", "message-heading");
           heading.append(element("span", "sender " + agentClass(row.sender), row.sender));
           heading.append(element("span", "meta", "→ " + row.recipient + " · " + timestamp(row.created_at)));
@@ -624,8 +1175,10 @@
         if (!rows.length) empty(container, "No messages yet. The next exchange will appear here.");
         if (first || atBottom) container.scrollTop = container.scrollHeight;
         get("message-count").textContent = String(rows.length);
+        enhancements.messages(rows);
       }
       function renderTasks(rows, teamState = null) {
+        const positions = enhancements.positions();
         if (teamState) {
           const nameOf = (id) => teamState.members.find((member) => member.id === id)?.name || "Unassigned";
           rows = teamState.tasks.map((task) => ({
@@ -659,6 +1212,7 @@
           for (const row of items) {
           const done = ["done", "accepted", "cancelled"].includes(row.status);
           const card = element("article", "task-card" + (row.assignee === "agent-b" ? " from-b" : "") + (done ? " is-done" : ""));
+          identify(card, "task", row.id); card.dataset.taskKey = row.id;
           const heading = element("div", "item-heading");
           const state = row.status === "blocked" ? " blocked" : ["open", "in_progress"].includes(row.status) ? " active" : "";
           heading.append(element("span", teamState ? "key" : "meta", teamState ? row.id : shortId(row.id)), element("span", "badge" + state, words(taskStatus(row))));
@@ -726,6 +1280,7 @@
         container.replaceChildren(fragment);
         if (!rows.length) container.prepend(element("p", "empty board-empty", "No tasks yet. Your agents can turn the master prompt into a plan, with the contract / skeleton first."));
         get("task-count").textContent = completed + " of " + rows.length + " done";
+        enhancements.board(rows, teamState, positions);
       }
       function renderPatches(rows) {
         const container = get("patches");
@@ -852,6 +1407,7 @@
       }
       function huddleCard(row, full = false) {
         const card = element("article", "huddle");
+        if (!full) identify(card, "huddle", row.id);
         const heading = element("div", "item-heading");
         heading.append(element("span", "meta", shortId(row.id) + " · " + words(row.kind)), element("span", "badge" + (row.status === "open" ? " active" : ""), row.status));
         card.append(heading, element("h3", "item-title", row.topic));
@@ -1022,6 +1578,7 @@
         const sorted = [...rows].sort((a, b) => Number(Boolean(a.answered_at)) - Number(Boolean(b.answered_at)) || b.created_at - a.created_at);
         for (const row of sorted) {
           const card = element("article", "item");
+          identify(card, "question", row.id);
           const heading = element("div", "item-heading");
           heading.append(element("span", "meta " + agentClass(row.sender), row.sender + " → " + row.recipient), element("span", "badge" + (row.answered_at ? " active" : " blocked"), row.answered_at ? "Answered" : "Waiting"));
           card.append(heading, element("p", "description", row.text), element("div", "meta", timestamp(row.created_at)));
@@ -1038,6 +1595,7 @@
         container.replaceChildren(fragment);
         if (!rows.length) empty(container, "No questions yet.");
         get("question-count").textContent = rows.filter((row) => !row.answered_at).length + " open · " + rows.length + " total";
+        enhancements.questions(rows);
         const create = get("question-create");
         create.hidden = !canWrite();
         preserveView("question-create", () => {
@@ -1205,20 +1763,20 @@
       }
       async function poll(afterWrite = false) {
         if (accessMode === "member") return hub.poll();
-        if (!key || controller || (writing && !afterWrite)) return;
+        if (!authenticated || controller || (writing && !afterWrite)) return;
         const currentSession = session;
         const requestController = new AbortController();
         controller = requestController;
         try {
           const response = await fetch("/v1/dashboard/state?after=" + lastEventId, {
-            headers: { Authorization: "Bearer " + key },
+            credentials: "same-origin",
             cache: "no-store", signal: requestController.signal
           });
           if (session !== currentSession || controller !== requestController) return;
           if (response.status === 401 && accessMode === "auto") {
             // Member keys authenticate against the team API, not the legacy agent gate.
             accessMode = "member";
-            hub.start(key);
+            hub.start();
             await hub.poll();
             return;
           }
@@ -1232,10 +1790,10 @@
           if (![data.messages, data.tasks, data.patches, data.audit, data.events].every(Array.isArray) || !Number.isSafeInteger(data.last_event_id)) throw new Error("Invalid snapshot");
           // The board and transcript are team reads, even beside legacy agent controls.
           // Standalone legacy servers can omit this capability and keep their snapshot.
-          let teamState = teamSnapshot;
+          let teamState = data.team_transcript ? teamSnapshot : null;
           if (data.team_transcript) {
             try {
-              const options = { headers: { Authorization: "Bearer " + key }, cache: "no-store", signal: requestController.signal };
+              const options = { credentials: "same-origin", cache: "no-store", signal: requestController.signal };
               const memberResponse = await fetch("/api/state", options);
               if (session !== currentSession || controller !== requestController) return;
               if ([401, 403].includes(memberResponse.status)) teamState = null;
@@ -1260,6 +1818,7 @@
           data.master_prompt = data.master_prompt || {};
           for (const name of ["huddles", "claims", "questions", "news"]) if (!Array.isArray(data[name])) data[name] = [];
           if (!agents.includes(data.me)) throw new Error("Invalid agent identity");
+          if (me && me !== data.me) { showAuth(); startSession("auto", teamState); return; }
           accessMode = "agent";
           if (me !== data.me) rendered = {};
           me = data.me;
@@ -1282,6 +1841,8 @@
           }
           preserveView("members", () => renderTeam(data));
           renderAttention(data);
+          enhancements.events(data.news);
+          enhancements.huddles(data.huddles);
           lastEventId = data.last_event_id;
           const now = new Date();
           get("last-updated").textContent = now.toLocaleTimeString();
@@ -1295,12 +1856,14 @@
           if (controller === requestController) controller = null;
         }
       }
-      function startSession(accessKey, mode = "auto") {
+      function startSession(mode = "auto", member = null) {
         stopSession();
-        key = accessKey;
+        authenticated = true;
         accessMode = mode;
-        sessionStore.set(accessKey, mode);
-        if (mode === "member") hub.start(accessKey);
+        teamSnapshot = member;
+        setAuthBusy(false);
+        storage.set("agentmesh:access-mode", mode);
+        if (mode === "member") hub.start();
         storage.remove("agentmesh-viewer"); // Discard obsolete localStorage credentials.
         get("access-key").value = "";
         get("auth-error").hidden = true;
@@ -1308,13 +1871,15 @@
         get("workspace").hidden = false;
         get("coordination").hidden = false;
         get("sign-out").hidden = false;
+        get("dashboard-tools").hidden = false;
+        sectionNav.open();
         setStatus("Connecting…");
         poll();
         timer = setInterval(poll, 4000);
       }
       // Team feature behavior is ported from hub_dashboard.html; attribution: docs/THIRD_PARTY.md.
       const hub = (() => {
-        let token = "", state = null, lastId = 0, stopped = true, generation = 0;
+        let state = null, lastId = 0, stopped = true, generation = 0;
         let polling = false, busy = false, streaming = false, refreshTimer = null, retryTimer = null, retryResolve = null;
         let refreshRevision = 0;
         const pending = new Set(), feedEvents = new Map(), questionsById = new Map(), editing = new Map();
@@ -1339,7 +1904,7 @@
           const run = generation, abort = new AbortController();
           pending.add(abort);
           try {
-            const options = { headers: { Authorization: `Bearer ${token}` }, cache: "no-store", signal: abort.signal };
+            const options = { headers: {}, credentials: "same-origin", cache: "no-store", signal: abort.signal };
             if (body !== undefined) {
               options.method = "POST";
               options.headers["Content-Type"] = "application/json";
@@ -1553,6 +2118,7 @@
         }
 
         function renderBoard() {
+          const positions = enhancements.positions();
           const tasks = [...(state.tasks || [])].sort((a, b) => keyNum(a.key) - keyNum(b.key));
           const done = tasks.filter((t) => t.status === 'done').length;
           $('#board-count').textContent = tasks.length ? `${done} of ${tasks.length} done` : '';
@@ -1565,6 +2131,7 @@
                 h('p', {}, 'Once the master prompt is locked, tell your agent ', quoted('plan this from our master prompt'), '. The plan shows up here, with the project skeleton first.'),
               ),
             );
+            enhancements.board(tasks, state, positions);
             return;
           }
           board.classList.remove('is-empty');
@@ -1577,6 +2144,7 @@
               ),
             );
           }
+          enhancements.board(tasks, state, positions);
         }
 
         function card(t) {
@@ -1613,7 +2181,7 @@
           if (t.status === 'in_progress' && t.assignee_id === meId) buttons.push(btn('Mark done', 'done'), btn('Release', 'release', true));
 
           const area = (t.area || []).slice(0, 2);
-          return h('article', { class: `card ${owner ? colorOf(owner) : 'c0'}${t.status === 'done' ? ' is-done' : ''}` },
+          return h('article', { class: `card ${owner ? colorOf(owner) : 'c0'}${t.status === 'done' ? ' is-done' : ''}`, id: itemId("task", t.key), tabindex: "-1", "data-task-key": t.key, "data-focus": itemId("task", t.key) },
             h('div', { class: 'card-top' }, h('span', { class: 'key', text: t.key }), flag),
             h('p', { class: 'card-title', text: t.title }),
             t.note ? h('p', { class: 'card-note', text: shorten(t.note, 140) }) : null,
@@ -1707,7 +2275,7 @@
           const more = x.post_count
             ? h('button', { class: 'btn ghost small', type: 'button', text: shown ? 'Hide discussion' : `Show discussion (${x.post_count})`, onclick: () => toggleTalk(x.id) })
             : null;
-          return h('article', { class: `huddle ${colorOf(x.started_by)}${isOpen ? '' : ' is-closed'}` },
+          return h('article', { class: `huddle ${colorOf(x.started_by)}${isOpen ? '' : ' is-closed'}`, id: itemId("huddle", x.id), tabindex: "-1", "data-focus": itemId("huddle", x.id) },
             h('div', { class: 'card-top' },
               h('span', { class: 'huddle-tags' }, h('span', { class: 'key', text: x.id }), h('span', { class: `pill kind kind-${x.kind}`, text: KIND_TEXT[x.kind] || x.kind })),
               isOpen ? null : h('span', { class: 'pill quiet', text: 'closed' }),
@@ -1968,6 +2536,7 @@
         function renderFeed() {
           const list = clear($('#news'));
           const events = [...feedEvents.values()].sort((a, b) => b.id - a.id);
+          enhancements.events(events);
           get('news-count').textContent = String(events.length);
           if (!events.length) {
             list.append(h('li', { class: 'feed-empty', text: 'Quiet so far. Things your team’s agents do show up here as they happen.' }));
@@ -2004,6 +2573,7 @@
           for (const m of state.members || []) {
             const status = presence(m);
             box.append(h("span", { class: "heartbeat", "data-state": status,
+              "data-member-id": m.id,
               title: "Last seen " + (toMs(m.last_seen) === null ? "not recorded" : new Date(toMs(m.last_seen)).toLocaleString()),
               text: `${m.name || "Member"} · ${status} · last seen ${ago(m.last_seen) || "not recorded"}` }));
           }
@@ -2030,7 +2600,7 @@
           const questions = questionsById;
           const box = clear($("#questions"));
           for (const q of [...questions.values()].reverse()) {
-            const row = h("article", { class: "item" },
+            const row = h("article", { class: "item", id: itemId("question", q.id), tabindex: "-1", "data-focus": itemId("question", q.id) },
               h("div", { class: "item-heading" }, code(q.id), h("span", { class: "badge", text: q.answer == null ? "Waiting" : "Answered" })),
               h("p", { class: "meta" }, who(q.from_id), " → ", who(q.to_id)),
               h("p", { class: "description", text: q.question }));
@@ -2045,6 +2615,7 @@
           }
           if (!questions.size) box.append(h("p", { class: "empty", text: "No questions yet." }));
           $("#question-count").textContent = `${[...questions.values()].filter(q => q.answer == null).length} open · ${questions.size} total`;
+          enhancements.questions([...questions.values()]);
           const create = $("#question-create");
           create.hidden = false;
           preserveView("question-create", () => {
@@ -2108,6 +2679,7 @@
           preserveView("huddles", renderHuddles);
           preserveView("master", renderPrompt);
           renderFeed(); renderQuestions(); renderClaims(); renderAsks();
+          enhancements.huddles(state.huddles || []);
           $("#master-count").textContent = String(state.prompt?.sections?.length || 0);
           const guide = get("rules"); clear(guide);
           for (const [label, text] of [["Workspace", "Team-scoped member access. Actions use your membership permissions."],
@@ -2134,6 +2706,10 @@
             showAuth("This member key belongs to a different team.", true);
             throw new Error("Team mismatch.");
           }
+          if (state && (state.team.id !== next.team.id || state.me.id !== next.me.id)) {
+            // Cookies are shared between tabs; never carry another identity's caches forward.
+            showAuth(); startSession("member", next); return;
+          }
           state = next;
           renderAll();
           for (const id of openTalks) loadTalk(id);
@@ -2159,6 +2735,7 @@
             lastEventId = data.last_event_id || 0;
           } catch (error) {
             if (generation !== run || stopped) return;
+            enhancements.messages([]);
             for (const name of ["messages", "patches", "audit"]) delete rendered[name];
             for (const id of ["message-count", "patch-count", "audit-count"]) get(id).textContent = "0";
             for (const id of ["messages", "patches", "audit"]) {
@@ -2201,7 +2778,7 @@
             const abort = new AbortController(); pending.add(abort);
             try {
               const response = await fetch(`/api/stream?since=${lastId}`, {
-                headers: { Authorization: `Bearer ${token}`, Accept: "text/event-stream" },
+                headers: { Accept: "text/event-stream" }, credentials: "same-origin",
                 cache: "no-store", signal: abort.signal
               });
               if (stopped || generation !== run) { await response.body?.cancel(); return; }
@@ -2242,7 +2819,7 @@
           catch { if (run === generation && !stopped) { $("#invite-url").select(); toast("Press Ctrl+C to copy"); } }
         });
         function stop() {
-          generation++; stopped = true; token = ""; state = null; polling = false; busy = false; streaming = false; lastId = 0;
+          generation++; stopped = true; state = null; polling = false; busy = false; streaming = false; lastId = 0;
           for (const abort of pending) abort.abort(); pending.clear();
           if (refreshTimer !== null) clearTimeout(refreshTimer);
           if (retryTimer !== null) clearTimeout(retryTimer);
@@ -2254,30 +2831,89 @@
           $("#invite-url").value = ""; $("#invite-exp").textContent = "";
           $("#invite-box").hidden = true; $("#invite-show").hidden = false;
         }
-        function start(value) {
-          token = value; stopped = false;
+        function start() {
+          stopped = false;
           const master = clear($("#master"));
           master.append(h("div", { id: "prompt-bar", class: "prompt-bar" }), h("div", { id: "sections", class: "sections" }));
           $("#huddle-list").hidden = false; $("#huddle-view").hidden = true;
         }
         return { start, stop, poll, takeToken };
       })();
+      function setAuthBusy(value) {
+        authBusy = value;
+        get("access-key").disabled = value;
+        get("access-form").querySelector("button").disabled = value;
+      }
+      async function restoreSession(mode = teamRoute ? "member" : storage.get("agentmesh:access-mode") === "member" ? "member" : "auto", afterLogin = false) {
+        stopSession();
+        const run = session, abort = new AbortController(); controller = abort;
+        setAuthBusy(true); get("auth").hidden = true; setStatus("Checking browser session…");
+        try {
+          const response = await fetch("/api/state", { credentials: "same-origin", cache: "no-store", signal: abort.signal });
+          if (run !== session) return;
+          if (response.status === 401 || response.status === 403) {
+            showAuth(afterLogin ? "The sign-in cookie was not accepted. Use HTTPS or localhost and allow cookies.": ""); return;
+          }
+          if (!response.ok) throw new Error("Browser sign-in is unavailable. Try again when the server reconnects.");
+          const member = await response.json();
+          if (run !== session) return;
+          if (!member?.team?.id || !member.me?.id || !Array.isArray(member.members)) throw new Error("Invalid team snapshot.");
+          if (teamRoute && member.team.id !== teamRoute[1]) {
+            showAuth("This browser session belongs to a different team. Enter that team's member key.", true); return;
+          }
+          controller = null;
+          startSession(mode, member);
+        } catch (error) {
+          if (run === session && !abort.signal.aborted) showAuth(error.message || "Could not restore browser sign-in.", true);
+        } finally { if (controller === abort) controller = null; }
+      }
+      async function signIn(candidate, mode) {
+        if (authBusy) { candidate = ""; return; }
+        get("access-key").value = "";
+        if (candidate.length < 32) { candidate = ""; showAuth("The access key must contain at least 32 characters.", true); return; }
+        stopSession();
+        const run = session, abort = new AbortController(); controller = abort;
+        setAuthBusy(true); get("auth-error").hidden = true;
+        try {
+          // The submitted credential is not retained while the request is awaited.
+          const pending = fetch("/auth/login", { method: "POST", credentials: "same-origin", cache: "no-store",
+            headers: { "Content-Type": "application/json" }, body: JSON.stringify({ key: candidate }), signal: abort.signal });
+          candidate = "";
+          const response = await pending;
+          if (run !== session) return;
+          if (!response.ok) { showAuth("Sign-in was rejected or is unavailable. Check the key and try again.", true); return; }
+          const result = await response.json();
+          if (run !== session) return;
+          if (typeof result?.team_id !== "string") throw new Error("Invalid sign-in response.");
+          controller = null; setAuthBusy(false);
+          await restoreSession(mode, true);
+        } catch {
+          if (run === session && !abort.signal.aborted) showAuth("Could not complete sign-in. Check the connection and try again.", true);
+        } finally { candidate = ""; if (controller === abort) controller = null; }
+      }
+      async function signOut() {
+        if (authBusy) return;
+        stopSession();
+        const run = session, abort = new AbortController(); controller = abort;
+        setAuthBusy(true); get("workspace").hidden = true; get("auth").hidden = true;
+        setStatus("Signing out…");
+        let message = "";
+        try {
+          const response = await fetch("/auth/logout", { method: "POST", credentials: "same-origin", cache: "no-store",
+            headers: { "Content-Type": "application/json" }, body: "{}", signal: abort.signal });
+          if (!response.ok) message = "Sign-out could not be confirmed; the browser cookie may remain active. Reconnect and retry.";
+        } catch { message = "Sign-out could not be confirmed; the browser cookie may remain active. Reconnect and retry."; }
+        if (run === session) showAuth(message, true);
+      }
       get("access-form").addEventListener("submit", (event) => {
         event.preventDefault();
-        const accessKey = get("access-key").value.trim();
-        if (accessKey.length < 32) {
-          get("auth-error").textContent = "The access key must contain at least 32 characters.";
-          get("auth-error").hidden = false;
-          return;
-        }
-        startSession(accessKey, teamRoute ? "member" : "auto");
+        signIn(get("access-key").value.trim(), teamRoute ? "member" : "auto");
       });
       const teamRoute = typeof location !== "undefined" && /^\/t\/([a-z0-9]+)$/.exec(location.pathname);
-      const memberKey = hub.takeToken();
-      const savedSession = sessionStore.get();
-      if (memberKey) startSession(memberKey, "member");
-      else if (savedSession) startSession(savedSession.key, savedSession.mode);
-      else showAuth();
+      let memberKey = hub.takeToken();
+      showAuth();
+      if (memberKey) { signIn(memberKey, "member"); memberKey = ""; }
+      else restoreSession();
     })();
   </script>
 </body>

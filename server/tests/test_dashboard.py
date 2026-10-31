@@ -89,7 +89,8 @@ def test_dashboard_keeps_writable_access_controls_and_theme():
     assert 'viewer-form' not in ids
     assert 'viewer-key' not in ids
     assert not re.search(r'read[- ]only|value=[\"\']viewer[\"\']', html, re.IGNORECASE)
-    assert 'Authorization: "Bearer "' in html
+    assert '/auth/login' in html
+    assert 'Authorization: "Bearer "' not in html
     # Notion palette: light/dark background and text, accent, agent-a/agent-b colors.
     for color in ("#f7f7f5", "#37352f", "#2383e2", "#d9730d", "#191919", "#529cca", "#ffa344"):
         assert color in html.lower()
@@ -124,9 +125,9 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const input = JSON.parse(fs.readFileSync(0, 'utf8'));
 
-function browser(snapshot) {
-  const ids = new Map(), timers = new Map(), storage = new Map([['papers-theme', 'dark']]);
-  const sessionStorage = new Map();
+function browser(snapshot, options = {}) {
+  const ids = new Map(), timers = new Map(), storage = options.localStorage || new Map([['papers-theme', 'dark']]);
+  const sessionStorage = options.sessionStorage || new Map(), storageWrites = [], cookieJar = options.cookieJar || new Map();
   let document, timerId = 0, nextStatus = 200, deferred = null;
   class Element {
     constructor(tag) {
@@ -209,52 +210,107 @@ function browser(snapshot) {
     querySelectorAll: selector => root.querySelectorAll(selector), addEventListener() {},
   };
   const calls = [];
+  const store = (data, name) => ({getItem: key => data.get(key) ?? null,
+    setItem: (key, value) => { storageWrites.push({storage: name, key, value: String(value)}); data.set(key, String(value)); },
+    removeItem: key => data.delete(key)});
   const context = vm.createContext({
-    document, AbortController, console,
-    localStorage: {getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value), removeItem: key => storage.delete(key)},
-    sessionStorage: {getItem: key => sessionStorage.get(key) ?? null, setItem: (key, value) => sessionStorage.set(key, value), removeItem: key => sessionStorage.delete(key)},
+    document, AbortController, Headers, URL, URLSearchParams, console,
+    location: { pathname: '/', hash: '', search: '', origin: 'https://dashboard.test' },
+    history: { replaceState() {} },
+    localStorage: store(storage, 'localStorage'),
+    sessionStorage: store(sessionStorage, 'sessionStorage'),
     setInterval: callback => { const id = ++timerId; timers.set(id, callback); return id; },
     clearInterval: id => timers.delete(id),
-    fetch: async (url, options) => {
-      calls.push({url, options}); const status = nextStatus; nextStatus = 200;
+    fetch: async (url, options = {}) => {
+      const call = {url, options}; calls.push(call);
+      assert.equal(new Headers(options.headers).has('Authorization'), false, 'page never sends bearer credentials');
+      const overridden = nextStatus; nextStatus = 200;
+      let status = overridden, payload;
+      if (url === '/auth/login') {
+        const candidate = JSON.parse(options.body).key;
+        if (status === 200) cookieJar.set('agentmesh_session', candidate);
+        payload = {team_id: 'default'};
+      } else if (url === '/auth/logout') {
+        cookieJar.delete('agentmesh_session'); payload = {};
+      } else if (url === '/api/state') {
+        status = cookieJar.has('agentmesh_session') ? status : 401;
+        payload = {team: {id: 'default'}, me: {id: 'member-a'}, members: [], tasks: []};
+      } else payload = structuredClone(snapshot);
+      call.status = status;
       const pending = deferred; deferred = null; if (pending) await pending;
-      return {status, ok: status === 200, json: async () => structuredClone(snapshot)};
+      return {status, ok: status === 200, json: async () => payload};
     },
   });
   for (const script of input.scripts) vm.runInContext(script, context, {timeout: 3000});
   return {
-    get, root, document, calls, storage, sessionStorage, timers, setStatus: value => { nextStatus = value; },
+    get, root, document, calls, storage, sessionStorage, storageWrites, cookieJar, timers, setStatus: value => { nextStatus = value; },
     deferNext: () => { let release; deferred = new Promise(resolve => { release = resolve; }); return release; },
   };
 }
 
+function assertCredentialStorage(app, tokens) {
+  for (const token of tokens) {
+    for (const data of [app.storage, app.sessionStorage]) for (const [key, value] of data) {
+      assert.ok(!key.includes(token) && !String(value).includes(token), 'credential never enters web storage');
+    }
+    for (const write of app.storageWrites) assert.ok(!write.key.includes(token) && !write.value.includes(token), 'no transient credential storage writes');
+    assert.ok(!app.root.textContent.includes(token), 'credential never appears as page text');
+    function check(node) { assert.ok(!node.value.includes(token), 'credential field cleared');
+      assert.ok(!Object.values(node.attrs).some(value => String(value).includes(token)), 'no credential in attributes'); node.children.forEach(check); }
+    check(app.root);
+  }
+  for (const call of app.calls) {
+    assert.equal(new Headers(call.options.headers).has('Authorization'), false, 'page sends no bearer');
+    assert.equal(call.options.credentials, 'same-origin', 'browser fetches use same-origin HttpOnly cookies');
+    if (call.url !== '/auth/login') for (const token of tokens) assert.ok(!String(call.options.body || '').includes(token), 'only login body contains candidate');
+  }
+}
+function assertSessionCredential(app, token) {
+  assert.equal(app.cookieJar.get('agentmesh_session'), token, 'opaque browser cookie retains authenticated session');
+  assert.equal(app.sessionStorage.has('agentmesh:session'), false, 'obsolete tab credential removed');
+  assertCredentialStorage(app, [token]);
+}
+
 const flush = () => new Promise(resolve => setImmediate(resolve));
 async function login(app) {
+  await flush();
   app.get('access-key').value = 'a'.repeat(40);
   app.get('access-form').fire('submit');
   await flush();
+  assertCredentialStorage(app, ['a'.repeat(40)]);
 }
 
 (async () => {
   const app = browser(input.snapshot), get = app.get;
-  assert.equal(app.calls.length, 0, 'no authenticated request before a credential');
+  assert.equal(app.calls.length, 1, 'boot checks its cookie without a JavaScript credential');
+  assert.equal(app.calls[0].url, '/api/state');
+  await flush();
   assert.equal(get('workspace').hidden, true);
   assert.equal(app.document.documentElement.getAttribute('data-theme'), 'dark');
   get('theme-toggle').click();
   assert.equal(app.document.documentElement.getAttribute('data-theme'), 'light');
   assert.equal(app.storage.get('papers-theme'), 'light');
   get('access-key').value = 'short'; get('access-form').fire('submit');
-  assert.equal(app.calls.length, 0, 'short keys must not make a request');
+  assert.equal(app.calls.length, 1, 'short keys must not make another request');
   assert.equal(get('auth-error').hidden, false);
   await login(app);
   assert.match(get('connection-status').textContent, /Live/);
   assert.equal(get('workspace').hidden, false);
-  assert.equal(app.calls[0].url, '/v1/dashboard/state?after=0');
-  assert.equal(app.calls[0].options.headers.Authorization, 'Bearer ' + 'a'.repeat(40));
-  assert.equal(app.calls[0].options.cache, 'no-store');
-  assert.equal(app.calls[0].options.method ?? 'GET', 'GET');
-  assert.deepEqual(JSON.parse(app.sessionStorage.get('agentmesh:session')), {key: 'a'.repeat(40), mode: 'auto'});
-  assert.ok(![...app.storage.values()].some(value => value.includes('a'.repeat(40))), 'agent token is not saved in localStorage');
+  assert.equal(app.calls[1].url, '/auth/login');
+  assert.deepEqual(JSON.parse(app.calls[1].options.body), {key: 'a'.repeat(40)});
+  assert.ok(app.calls.some(call => call.url === '/v1/dashboard/state?after=0'));
+  assert.ok(app.calls.every(call => call.options.cache === 'no-store'));
+  assertCredentialStorage(app, ['a'.repeat(40)]);
+  assertSessionCredential(app, 'a'.repeat(40), 'auto');
+  const restored = browser(input.snapshot, {localStorage: app.storage, cookieJar: app.cookieJar});
+  await flush();
+  assert.equal(restored.get('auth').hidden, true, 'reload restores the cookie session without asking for its key');
+  assert.equal(restored.get('workspace').hidden, false);
+  assert.equal(restored.calls[0].url, '/api/state');
+  assert.ok(!restored.calls.some(call => call.url === '/auth/login'), 'reload does not replay a key');
+  assertSessionCredential(restored, 'a'.repeat(40), 'auto');
+  assert.equal(restored.get('messages').textContent, get('messages').textContent, 'reload retains the full transcript');
+
   for (const id of ['messages', 'tasks', 'master', 'huddle-list', 'claims', 'questions', 'news', 'patches']) {
     assert.ok(get(id).textContent.includes(input.unsafe), id + ' must preserve untrusted strings as literal text');
     assert.equal(get(id).querySelectorAll('img').length, 0, id + ' must not create injected image nodes');
@@ -290,18 +346,19 @@ async function login(app) {
   get('huddle-back').click();
   assert.equal(get('huddle-list').hidden, false);
   assert.equal(get('huddle-view').hidden, true);
-  assert.equal(app.calls.length, 1, 'huddle navigation needs no additional endpoint');
+  assert.equal(app.calls.filter(call => call.url.startsWith('/v1/')).length, 1, 'huddle navigation needs no additional endpoint');
   const details = get('tasks').querySelector('details'); details.open = true;
   input.snapshot.tasks[0].title += ' updated';
   await [...app.timers.values()][0]();
   assert.match(get('connection-status').textContent, /Live/);
-  assert.equal(app.calls[1].url, '/v1/dashboard/state?after=' + input.snapshot.last_event_id);
+  assert.equal(app.calls.at(-1).url, '/v1/dashboard/state?after=' + input.snapshot.last_event_id);
   assert.equal(get('tasks').querySelector('details').open, true, 'polls preserve expanded task details');
-  get('sign-out').click();
+  get('sign-out').click(); await flush();
   assert.equal(get('workspace').hidden, true);
   assert.equal(get('auth').hidden, false);
   assert.equal(app.storage.has('agentmesh-viewer'), false);
-  assert.equal(app.sessionStorage.has('agentmesh:session'), false, 'sign-out clears the saved session');
+  assert.equal(app.sessionStorage.has('agentmesh:session'), false, 'sign-out or rejected credentials leave no obsolete tab credential');
+  assertCredentialStorage(app, ['a'.repeat(40)]);
   assert.equal(app.timers.size, 0);
   for (const id of ['messages', 'tasks', 'master', 'huddle-list', 'huddle-view', 'claims', 'questions', 'news', 'members', 'asks-list']) {
     assert.ok(!get(id).textContent.includes(input.unsafe), id + ' must clear on sign out');
@@ -309,13 +366,14 @@ async function login(app) {
   app.setStatus(403); await login(app);
   assert.equal(get('auth').hidden, false);
   assert.equal(app.storage.has('agentmesh-viewer'), false);
-  assert.equal(app.sessionStorage.has('agentmesh:session'), false, 'failed authentication clears the saved session');
+  assert.equal(app.sessionStorage.has('agentmesh:session'), false, 'sign-out or rejected credentials leave no obsolete tab credential');
+  assertCredentialStorage(app, ['a'.repeat(40)]);
   assert.equal(app.timers.size, 0);
-  assert.match(get('auth-error').textContent, /member key|agent token/i);
+  assert.match(get('auth-error').textContent, /sign-in.*rejected|member key|agent token/i);
   for (const call of app.calls) {
-    assert.match(call.url, /^\/v1\/dashboard\/state\?after=\d+$/);
-    assert.equal(call.options.method ?? 'GET', 'GET');
-    assert.ok(call.options.headers.Authorization.startsWith('Bearer '));
+    assert.ok(['/api/state', '/auth/login', '/auth/logout'].includes(call.url) || /^\/v1\/dashboard\/state\?after=\d+$/.test(call.url));
+    assert.equal(call.options.method ?? 'GET', call.url.startsWith('/auth/') ? 'POST' : 'GET');
+    assert.equal(new Headers(call.options.headers).has('Authorization'), false);
   }
 
   const old = browser({me: 'agent-a', messages: [], tasks: [], patches: [], audit: [], events: [], last_event_id: 0});
@@ -324,7 +382,7 @@ async function login(app) {
   const raced = browser(input.snapshot); await login(raced);
   const release = raced.deferNext(), pendingPoll = [...raced.timers.values()][0]();
   raced.get('sign-out').click(); release(); await pendingPoll;
-  assert.equal(raced.calls[1].options.signal.aborted, true);
+  assert.equal(raced.calls.findLast(call => call.url.startsWith('/v1/')).options.signal.aborted, true);
   assert.equal(raced.get('workspace').hidden, true, 'a stale response must not reopen a signed-out session');
   assert.equal(raced.get('messages').textContent, '', 'a stale response must not restore private transcript text');
   console.log('Dashboard data binding, text safety, navigation, theme and agent sessions passed');

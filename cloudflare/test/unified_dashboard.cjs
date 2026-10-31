@@ -29,8 +29,10 @@ function parseDocument(html) {
 }
 
 function browser(input, request, options = {}) {
-  const ids = new Map(), timers = new Map(), storage = new Map([['papers-theme', 'dark']]);
+  const ids = new Map(), timers = new Map(), storage = options.localStorage || new Map([['papers-theme', 'dark']]);
   const sessionStorage = options.sessionStorage || new Map(), calls = [], historyCalls = [], clipboard = [], streams = [];
+  const storageWrites = [], cookieJar = options.cookieJar || new Map();
+  const transportOrigin = options.origin || input.origin || request.origin || 'https://agentmesh.zahid.win';
   let document, nextTimer = 0;
   class Element {
     constructor(tag) {
@@ -143,21 +145,30 @@ function browser(input, request, options = {}) {
     querySelector: selector => dom.querySelector(selector), querySelectorAll: selector => dom.querySelectorAll(selector), addEventListener() {},
   };
   const location = { pathname: options.pathname || '/t/' + input.team, search: '', hash: options.hash || '', href: 'https://agentmesh.example', replace() {} };
-  const store = data => ({ getItem: key => data.get(key) ?? null, setItem: (key, value) => data.set(key, value), removeItem: key => data.delete(key) });
-  const app = { get, root: dom, document, storage, sessionStorage, calls, timers, historyCalls, clipboard, location, stateTransform: null, statusOverride: null,
+  const store = (data, name) => ({ getItem: key => data.get(key) ?? null,
+    setItem: (key, value) => { storageWrites.push({ storage: name, key, value: String(value) }); data.set(key, String(value)); },
+    removeItem: key => data.delete(key) });
+  const app = { get, root: dom, document, storage, sessionStorage, storageWrites, cookieJar, calls, timers, historyCalls, clipboard, location, stateTransform: null, statusOverride: null,
     sendChunk: chunk => { for (const stream of streams) stream.push(chunk); } };
   const context = vm.createContext({
-    document, Node: Element, AbortController, URL, URLSearchParams, TextDecoder, TextEncoder, structuredClone, console,
+    document, Node: Element, AbortController, Headers, URL, URLSearchParams, TextDecoder, TextEncoder, structuredClone, console,
     Date: options.now === undefined ? Date : class extends Date { static now() { return options.now; } },
     location, history: { replaceState: (...args) => { historyCalls.push(args); location.hash = ''; } },
     navigator: { clipboard: { writeText: async text => { clipboard.push(text); } } },
-    localStorage: store(storage), sessionStorage: store(sessionStorage),
+    localStorage: store(storage, 'localStorage'), sessionStorage: store(sessionStorage, 'sessionStorage'),
     setInterval: callback => { const id = ++nextTimer; timers.set(id, callback); return id; },
     clearInterval: id => timers.delete(id),
     setTimeout: callback => { const id = ++nextTimer; return id; }, clearTimeout() {},
     fetch: async (url, init = {}) => {
       const call = { url: String(url), options: init, done: false }; calls.push(call);
       try {
+        // Emulate the browser network boundary: HttpOnly cookies are never
+        // exposed to the page's VM, fetch init, or either web-storage object.
+        assert.equal(new Headers(init.headers).has('Authorization'), false, 'page never retains a bearer credential');
+        const headers = new Headers(init.headers);
+        if (cookieJar.has('agentmesh_session')) headers.set('Cookie', 'agentmesh_session=' + cookieJar.get('agentmesh_session'));
+        if (['POST', 'PUT', 'DELETE', 'PATCH'].includes(init.method)) headers.set('Origin', transportOrigin);
+        call.networkHeaders = headers;
         // Streaming itself is separately tested against both server runtimes. Keep
         // the browser reader open without a network handle or reconnect spin.
         if (call.url.startsWith('/api/stream')) {
@@ -177,7 +188,15 @@ function browser(input, request, options = {}) {
           const status = app.statusOverride; app.statusOverride = null;
           call.status = status; return { status, ok: false, json: async () => ({ error: 'Access denied' }) };
         }
-        const response = await request(call.url, init), payload = await response.json();
+        const response = await request(call.url, { ...init, headers }), payload = await response.json();
+        const setCookie = response.headers?.get('set-cookie');
+        if (setCookie) {
+          assert.match(setCookie, /;\s*HttpOnly/i); assert.match(setCookie, /;\s*Secure/i);
+          assert.match(setCookie, /;\s*SameSite=Strict/i); assert.match(setCookie, /;\s*Path=\//i);
+          const value = /^agentmesh_session=([^;]*)/.exec(setCookie)?.[1];
+          if (/Max-Age=0(?:;|$)/i.test(setCookie)) cookieJar.delete('agentmesh_session');
+          else { assert.match(setCookie, /Max-Age=2592000(?:;|$)/i); cookieJar.set('agentmesh_session', value); }
+        }
         call.status = response.status; call.payload = payload;
         if (call.url === '/api/state' && app.stateTransform) app.stateTransform(payload);
         return { status: response.status, ok: response.ok, json: async () => structuredClone(payload) };
@@ -197,10 +216,38 @@ async function idle(app) {
   assert.fail('Browser requests did not settle: ' + app.calls.filter(call => !call.done).map(call => call.url));
 }
 async function login(app, token) {
+  await idle(app);
   app.get('access-key').value = token;
   await app.get('access-form').fire('submit'); await idle(app);
   assert.equal(app.get('auth').hidden, true, app.get('auth-error').textContent);
+  assertCredentialStorage(app, [token]);
 }
+function assertCredentialStorage(app, tokens) {
+  for (const token of tokens) {
+    for (const data of [app.storage, app.sessionStorage]) for (const [key, value] of data) {
+      assert.ok(!key.includes(token) && !String(value).includes(token), 'credentials never enter browser web storage');
+    }
+    for (const write of app.storageWrites) assert.ok(!write.key.includes(token) && !write.value.includes(token), 'no transient credential storage writes');
+    assert.ok(!app.root.textContent.includes(token), 'credential never appears as page text');
+    function check(node) {
+      assert.ok(!node.value.includes(token), 'credential is cleared from fields');
+      assert.ok(!Object.values(node.attrs).some(value => String(value).includes(token)), 'credential never enters HTML attributes');
+      node.children.forEach(check);
+    }
+    check(app.root);
+  }
+  for (const call of app.calls) {
+    assert.equal(new Headers(call.options.headers).has('Authorization'), false, 'the page never sends Authorization');
+    assert.equal(call.options.credentials, 'same-origin', 'browser fetches use same-origin HttpOnly cookies');
+    if (call.url !== '/auth/login') for (const token of tokens) assert.ok(!String(call.options.body || '').includes(token), 'only the sign-in request may contain a key');
+  }
+}
+function assertSessionCredential(app, token) {
+  assert.equal(app.cookieJar.get('agentmesh_session'), token, 'browser network layer retains the HttpOnly session');
+  assert.equal(app.sessionStorage.has('agentmesh:session'), false, 'no obsolete tab credential remains');
+  assertCredentialStorage(app, [token]);
+}
+
 async function poll(app) {
   for (const refresh of app.timers.values()) await refresh();
   await idle(app);
@@ -229,7 +276,7 @@ function postFrom(calls, route) {
 async function run(request, tokens) {
   const dashboard = fs.readFileSync(dashboardPath), html = dashboard.toString('utf8');
   assert.deepEqual(dashboard, fs.readFileSync(path.join(root, 'server/src/agentmesh_server/dashboard.html')), 'both servers ship byte-identical pages');
-  const input = { tree: parseDocument(html), scripts: [...html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script\s*>/gi)].map(match => match[1]) };
+  const input = { origin: request.origin || 'https://agentmesh.zahid.win', tree: parseDocument(html), scripts: [...html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script\s*>/gi)].map(match => match[1]) };
   async function api(route, body, token = tokens.a) {
     const response = await request(route, { headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
       ...(body === undefined ? {} : { method: 'POST', body: JSON.stringify(body) }) });
@@ -240,7 +287,8 @@ async function run(request, tokens) {
   await runTranscript(input, request, api, tokens);
   await runSessions(input, request, tokens, html);
   const empty = browser(input, request); await idle(empty);
-  assert.equal(empty.calls.length, 0, 'no authenticated requests before a key is supplied');
+  assert.equal(empty.calls.length, 1, 'fresh browser checks its cookie once');
+  assert.equal(empty.calls[0].url, '/api/state'); assert.equal(empty.calls[0].status, 401);
   assert.equal(empty.get('access-mode'), null, 'one access form has no viewer or mode selector');
   assert.doesNotMatch(html, /read[- ]only|value=["']viewer["']/i, 'the served page has no read-only mode');
   for (const id of ['tasks', 'huddle-list', 'huddle-view', 'master', 'news', 'members', 'rules', 'house-rules', 'questions', 'claims',
@@ -258,8 +306,8 @@ async function run(request, tokens) {
   assert.ok(app.calls.some(call => call.url.startsWith('/api/events')), 'hub live feed is loaded');
   assert.ok(app.calls.some(call => call.url.startsWith('/api/legacy/transcript?') && new URL(call.url, 'https://example').searchParams.get('team') === input.team), 'legacy panels read the explicitly scoped adapter');
   assert.ok(!app.calls.some(call => call.url.startsWith('/v1/')), 'member mode never mixes legacy bearer endpoints into hub state');
-  for (const call of app.calls) assert.equal(call.options.headers.Authorization, 'Bearer ' + tokens.a, call.url + ' uses the same member key');
-  assert.ok(![...app.storage.values()].includes(tokens.a), 'member key is not saved in localStorage');
+  for (const call of app.calls.filter(call => !call.url.startsWith('/auth/'))) assert.equal(call.networkHeaders.get('Cookie'), 'agentmesh_session=' + tokens.a, call.url + ' uses the HttpOnly member cookie');
+  assertCredentialStorage(app, Object.values(tokens));
   assert.doesNotMatch(app.root.querySelector('body').textContent, /openhuddle/i, 'no upstream branding in visible UI');
   for (const token of Object.values(tokens)) assert.ok(!html.includes(token), 'no credential embedded in HTML');
   const event = { id: initial.last_event_id + 1000, member_id: initial.me.id, kind: 'update', data: { text: 'An update delivered over the live stream' }, created_at: Date.now() };
@@ -276,7 +324,8 @@ async function run(request, tokens) {
   assert.equal(app.get('auth').hidden, false); assert.equal(app.get('workspace').hidden, true);
   assert.equal(app.get('member-heartbeats').textContent, '', 'sign-out clears other members');
   assert.equal(app.timers.size, 0, 'sign-out stops polling');
-  assert.equal(app.sessionStorage.has('agentmesh:session'), false, 'sign-out removes remembered member session');
+  assert.equal(app.sessionStorage.has('agentmesh:session'), false, 'sign-out leaves no remembered member session');
+  assertCredentialStorage(app, Object.values(tokens));
   await login(app, tokens.a);
 
   const rootApp = browser(input, request, { pathname: '/', hash: '#k=' + encodeURIComponent(tokens.a) }); await idle(rootApp);
@@ -289,8 +338,8 @@ async function run(request, tokens) {
   assert.ok(agent.calls.some(call => call.url === '/v1/dashboard/state?after=0' && call.status === 200));
   assert.ok(agent.calls.some(call => call.url.startsWith('/api/legacy/transcript?') && call.status === 200), 'agent controls use the separately member-authorized team transcript');
   assert.ok(agent.calls.filter(call => call.url.startsWith('/api/')).every(call => (call.options.method || 'GET') === 'GET'), 'agent controls only read the member transcript and never mutate through member routes');
-  assert.deepEqual(JSON.parse(agent.sessionStorage.get('agentmesh:session')), { key: tokens.a, mode: 'auto' }, 'typed agent token is remembered with its detection mode');
-  assert.ok(![...agent.storage.values()].some(value => value.includes(tokens.a)), 'legacy agent credential is never saved in localStorage');
+  assertSessionCredential(agent, tokens.a, 'auto');
+  assertCredentialStorage(agent, Object.values(tokens));
   for (const enabled of [false, true]) {
     const before = agent.calls.length, toggle = agent.get('auto-respond');
     assert.ok(toggle, 'agent settings retain a writable control'); toggle.checked = enabled; await toggle.fire('change'); await idle(agent);
@@ -303,20 +352,23 @@ async function run(request, tokens) {
   assert.equal(rejected.get('workspace').hidden, true);
   assert.equal(rejected.sessionStorage.has('agentmesh:session'), false, 'failed typed authentication clears the saved session');
   assert.equal(rejected.root.querySelectorAll('[data-write]').length, 0, 'rejected viewer token exposes no writes');
-  assert.ok(rejected.calls.every(call => (call.options.method || 'GET') === 'GET'), 'rejected viewer never causes a write');
+  assert.ok(rejected.calls.every(call => (call.options.method || 'GET') === 'GET' || call.url === '/auth/login'), 'rejected viewer never causes a data mutation');
   assert.ok(!rejected.calls.some(call => call.url.startsWith('/v1/transcript')), 'removed viewer read path is never requested');
 
-  let releaseSnapshot;
+  let releaseSnapshot, enterSnapshot, holdSnapshot = false;
   const snapshotGate = new Promise(resolve => { releaseSnapshot = resolve; });
+  const snapshotEntered = new Promise(resolve => { enterSnapshot = resolve; });
   const stale = browser(input, async (route, options) => {
     // Model a transport that has already received its response when abort runs:
     // the session-generation guard, not cancellation alone, must hide its data.
     const response = await request(route, { ...options, signal: undefined });
-    if (route === '/api/state') await snapshotGate;
+    if (holdSnapshot && route === '/api/state') { enterSnapshot(); await snapshotGate; }
     return response;
   }, { hash: '#k=' + encodeURIComponent(tokens.a) });
-  await stale.get('sign-out').click(); releaseSnapshot(); await idle(stale);
-  assert.equal(stale.calls.find(call => call.url === '/api/state').payload.team.id, input.team, 'a real late snapshot was delivered');
+  await idle(stale); holdSnapshot = true;
+  const stalePoll = poll(stale); await snapshotEntered;
+  await stale.get('sign-out').click(); releaseSnapshot(); await stalePoll; await idle(stale);
+  assert.equal(stale.calls.findLast(call => call.url === '/api/state').payload.team.id, input.team, 'a real late snapshot was delivered');
   assert.equal(stale.get('auth').hidden, false, 'a late pre-sign-out snapshot never reconnects the page');
   assert.equal(stale.get('members').textContent, ''); assert.equal(stale.get('member-heartbeats').textContent, '');
   assert.equal(stale.timers.size, 0);
@@ -356,9 +408,13 @@ async function run(request, tokens) {
   assert.ok(typedMember.calls.some(call => call.url.startsWith('/v1/dashboard/state') && call.status === 401), 'member key is not accepted as a legacy agent token');
   assert.ok(typedMember.calls.some(call => call.url === '/api/state' && call.status === 200), 'typed member key opens its own team workspace');
   assert.ok(typedMember.get('members').textContent.includes('Isolated owner'));
-  assert.deepEqual(JSON.parse(typedMember.sessionStorage.get('agentmesh:session')), { key: created.token, mode: 'auto' }, 'typed member key is remembered with its detection mode');
-  const reloadedMember = browser(input, request, { pathname: '/', sessionStorage: typedMember.sessionStorage }); await idle(reloadedMember);
-  assert.equal(reloadedMember.get('auth').hidden, true, 'auto-detected member key resumes on reload');
+  assertSessionCredential(typedMember, created.token, 'auto');
+  assertCredentialStorage(typedMember, [created.token]);
+  const reloadedMember = browser(input, request, { pathname: '/', localStorage: typedMember.storage, sessionStorage: typedMember.sessionStorage, cookieJar: typedMember.cookieJar }); await idle(reloadedMember);
+  assert.equal(reloadedMember.get('auth').hidden, true, 'member reload restores the HttpOnly cookie session without asking for its key');
+  assert.equal(reloadedMember.get('workspace').hidden, false);
+  assert.ok(reloadedMember.calls.length > 0, 'member reload authenticates from the persistent cookie');
+  assertSessionCredential(reloadedMember, created.token, 'auto');
   assert.ok(reloadedMember.get('members').textContent.includes('Isolated owner'));
   assert.ok(reloadedMember.calls.some(call => call.url.startsWith('/v1/dashboard/state') && call.status === 401));
   assert.ok(reloadedMember.calls.some(call => call.url === '/api/state' && call.status === 200));
@@ -373,8 +429,83 @@ async function run(request, tokens) {
   assert.ok(!wrongTeam.get('members').textContent.includes('Isolated owner'));
   assert.equal(wrongTeam.get('member-heartbeats').textContent, '');
 
+  await runCookieIdentitySwitch(input, request, api, tokens, created);
+
   await runActions(input, request, api, tokens);
   console.log('Unified dashboard panels, member sessions, hub actions, presence, safe names and team scoping passed');
+}
+
+async function runCookieIdentitySwitch(input, request, api, tokens, otherTeam) {
+  const markers = {
+    task: 'Cookie switch source-team task marker',
+    question: 'Cookie switch source-team question marker',
+    feed: 'Cookie switch source-team feed marker',
+    draft: 'Cookie switch unsent source-team draft marker',
+  };
+  await api('/api/plan', { tasks: [{ key: 'COOKIE-SWITCH', title: markers.task }] });
+  await api('/api/ask', { to: 'agent-a', question: markers.question, wait_s: 0 }, tokens.b);
+  await api('/api/post', { kind: 'update', text: markers.feed });
+  // Keep a question composer in both teams, so stale field restoration cannot
+  // hide behind a one-member destination which has no question form.
+  const destinationInvite = await api('/api/invite', {}, otherTeam.token);
+  await api('/api/join', { code: destinationInvite.invite_url, member_name: 'Cookie destination teammate' });
+  const member = browser(input, request, { pathname: '/', hash: '#k=' + encodeURIComponent(tokens.a) });
+  await idle(member);
+  assert.ok(member.get('tasks').textContent.includes(markers.task), 'source-team board is primed');
+  assert.ok(member.get('questions').textContent.includes(markers.question), 'source-team question cache is primed');
+  assert.ok(member.get('news').textContent.includes(markers.feed), 'source-team feed cache is primed');
+  await set(member, 'hub-question-text', markers.draft);
+  assert.equal(member.get('hub-question-text').value, markers.draft, 'source-team private draft is primed');
+
+  // A second tab signs into another team. Only the browser-owned cookie jar
+  // changes: this page never sees the replacement access key in JS or storage.
+  const before = member.calls.length;
+  member.cookieJar.set('agentmesh_session', otherTeam.token);
+  await poll(member); await idle(member);
+  const destination = member.calls.slice(before).findLast(call => call.url === '/api/state' && call.status === 200).payload;
+  assert.equal(member.timers.size, 1, 'cross-team identity restart leaves one polling timer');
+  assert.equal(destination.team.id, otherTeam.team_id);
+  assert.equal(destination.me.id, otherTeam.member_id);
+  assert.match(member.get('connection-status').textContent, /Live.*Isolated owner/);
+  assert.ok(member.get('members').textContent.includes('Isolated owner'));
+  assert.ok(!member.get('members').textContent.includes('agent-a'), 'old-team presence is removed');
+  assert.ok(member.get('messages').textContent.includes('Isolated team transcript post'), 'new-team transcript replaces the old one');
+  assert.equal(member.get('tasks').querySelectorAll('.task-card').length, 0, 'new team does not inherit old task cards');
+  function assertNoMarker(node, marker) {
+    assert.ok(!node.textContent.includes(marker), 'old-team text is absent: ' + marker);
+    assert.ok(!node.value.includes(marker), 'old-team field value is absent: ' + marker);
+    assert.ok(!Object.values(node.attrs).some(value => String(value).includes(marker)), 'old-team attributes are absent: ' + marker);
+    for (const child of node.children) assertNoMarker(child, marker);
+  }
+  for (const marker of Object.values(markers)) assertNoMarker(member.root, marker);
+  assertCredentialStorage(member, [tokens.a, otherTeam.token]);
+  await member.get('sign-out').click(); await idle(member);
+
+  // Both legacy agents intentionally share the team transcript, so a direct
+  // message is visible to sender AND recipient. Its actor-scoped audit record,
+  // unlike that shared transcript, must disappear when the identity changes.
+  const sent = await request('/v1/messages', { method: 'POST',
+    headers: { Authorization: 'Bearer ' + tokens.a, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ to: 'agent-b', text: 'Cookie identity shared transcript message' }) });
+  assert.equal(sent.status, 201);
+  const auditRef = (await sent.json()).id;
+  const agent = browser(input, request, { pathname: '/' }); await login(agent, tokens.a);
+  assert.ok(agent.get('audit').textContent.includes(auditRef), 'agent-a-only audit record is primed');
+  const privateDraft = 'Cookie switch private legacy question draft';
+  await set(agent, 'question-text', privateDraft);
+  const changed = agent.calls.length;
+  agent.cookieJar.set('agentmesh_session', tokens.b);
+  await poll(agent); await idle(agent);
+  assert.equal(agent.timers.size, 1, 'same-team identity restart leaves one polling timer');
+  assert.match(agent.get('connection-status').textContent, /Live.*agent-b/);
+  assert.match(agent.get('access-description').textContent, /agent-b/);
+  assert.ok(agent.calls.slice(changed).some(call => call.url === '/v1/dashboard/state?after=0' && call.payload?.me === 'agent-b'), 'recipient event cursor resets for the new identity');
+  assert.ok(!agent.get('audit').textContent.includes(auditRef), 'old identity actor-scoped audit is cleared');
+  assert.equal(agent.get('question-text').value, '', 'old identity private draft is cleared');
+  assert.ok(!agent.root.textContent.includes(privateDraft));
+  assert.ok(agent.get('messages').textContent.includes('Cookie identity shared transcript message'), 'intentional shared-team transcript remains available');
+  assertSessionCredential(agent, tokens.b);
+  await agent.get('sign-out').click(); await idle(agent);
 }
 
 async function runTeamBoard(input, request, api, tokens) {
@@ -425,7 +556,8 @@ async function runTeamBoard(input, request, api, tokens) {
   }
   await poll(app);
   assertBoard(app);
-  assert.deepEqual(JSON.parse(app.sessionStorage.get('agentmesh:session')), { key: tokens.a, mode: 'auto' });
+  assertCredentialStorage(app, Object.values(tokens));
+  assertSessionCredential(app, tokens.a, 'auto');
   for (const [key, status, column] of [
     ['T1', 'done', 'Done / closed'], ['T39', 'assigned', 'Assigned'],
     ['T40', 'in progress', 'In progress / blocked'], ['T41', 'proposed', 'Proposed / open'], ['T55', 'open', 'Proposed / open'],
@@ -461,23 +593,31 @@ async function runTeamBoard(input, request, api, tokens) {
   assertBoard(interrupted);
   await interrupted.get('sign-out').click(); await idle(interrupted);
   assert.equal(interrupted.get('tasks').querySelectorAll('.task-card').length, 0, 'sign-out clears the cached team board');
+  // A cookie login still cannot open a workspace unless the mandatory initial
+  // team read succeeds. Never render cached or legacy tasks in its place.
   teamUnavailable = true;
-  await login(interrupted, tokens.a);
+  interrupted.get('access-key').value = tokens.a;
+  await interrupted.get('access-form').fire('submit'); await idle(interrupted);
   assert.equal(interrupted.get('tasks').querySelectorAll('.task-card').length, 0, 'a new session cannot reuse the previous team snapshot or legacy tasks');
-  assert.equal(interrupted.get('task-count').textContent, 'Unavailable', 'an initial team outage does not show the legacy task count');
+  assert.equal(interrupted.get('workspace').hidden, true, 'an initial team outage cannot open an unauthenticated workspace');
+  assert.match(interrupted.get('auth-error').textContent, /unavailable|reconnect/i, 'initial outage is reported rather than inventing a board');
   assert.ok(!interrupted.get('tasks').textContent.includes(legacyTitle));
   teamUnavailable = false;
-  await poll(interrupted);
+  await login(interrupted, tokens.a);
   assertBoard(interrupted);
   await interrupted.get('sign-out').click(); await idle(interrupted);
 
-  const restored = browser(input, request, { pathname: '/',
-    sessionStorage: new Map([['agentmesh:session', JSON.stringify({ key: tokens.a, mode: 'agent' })]]) });
-  await idle(restored);
-  assertBoard(restored);
-  assert.deepEqual(JSON.parse(restored.sessionStorage.get('agentmesh:session')), { key: tokens.a, mode: 'agent' });
-  assert.ok(restored.calls.filter(call => call.url.startsWith('/api/')).every(call => call.url === '/api/state' || call.url.startsWith('/api/legacy/transcript?')), 'restoring an agent session retains its existing read routes');
-  await restored.get('sign-out').click(); await idle(restored);
+  const reauthenticated = browser(input, request, { pathname: '/',
+    cookieJar: new Map([['agentmesh_session', tokens.a]]) });
+  await idle(reauthenticated);
+  assert.equal(reauthenticated.get('auth').hidden, true, 'a saved agent session authenticates without another key prompt');
+  assert.equal(reauthenticated.get('workspace').hidden, false);
+  assert.ok(reauthenticated.calls.length > 0, 'a saved agent session restores authenticated requests');
+  assertSessionCredential(reauthenticated, tokens.a, 'agent');
+  assertBoard(reauthenticated);
+  assertCredentialStorage(reauthenticated, Object.values(tokens));
+  assert.ok(reauthenticated.calls.filter(call => call.url.startsWith('/api/')).every(call => call.url === '/api/state' || call.url.startsWith('/api/legacy/transcript?')), 'restored agent authentication retains its existing read routes');
+  await reauthenticated.get('sign-out').click(); await idle(reauthenticated);
 
   const member = browser(input, request, { pathname: '/', hash: '#k=' + encodeURIComponent(tokens.a) });
   await idle(member);
@@ -520,76 +660,78 @@ async function runTeamBoard(input, request, api, tokens) {
 async function runSessions(input, request, tokens, html) {
   const sessionKey = 'agentmesh:session';
   function assertPrivate(app, token) {
-    assert.ok(!html.includes(token), 'credential is not embedded in the served HTML');
-    assert.ok(!app.root.textContent.includes(token), 'credential is not rendered as page text');
-    function check(node) {
-      assert.ok(!node.value.includes(token), 'credential is not retained in a DOM field');
-      assert.ok(!Object.values(node.attrs).some(value => value.includes(token)), 'credential is not embedded in a DOM attribute');
-      node.children.forEach(check);
-    }
-    check(app.root);
-    assert.ok(![...app.storage.values()].some(value => value.includes(token)), 'credential is never copied into localStorage');
+    assert.ok(!html.includes(token), 'credential is not embedded in served HTML');
+    assertCredentialStorage(app, [token]);
   }
-  function assertSession(app, token, mode) {
-    assert.deepEqual([...app.sessionStorage.keys()], [sessionKey], 'one session entry stores the key and mode');
-    assert.deepEqual(JSON.parse(app.sessionStorage.get(sessionKey)), { key: token, mode });
-    assertPrivate(app, token);
+  function assertLocked(app, label) {
+    assert.equal(app.get('auth').hidden, false, label + ' requires explicit sign-in');
+    assert.equal(app.get('workspace').hidden, true, label + ' hides the workspace');
+    assert.equal(app.timers.size, 0, label + ' starts no polling');
+    assert.equal(app.sessionStorage.has(sessionKey), false, label + ' purges obsolete tab sessions');
+    assert.ok(app.calls.some(call => call.url === '/api/state' && call.status === 401), label + ' checks the cookie with the server');
+    assert.ok(app.calls.every(call => (call.options.method || 'GET') === 'GET'), label + ' never mutates data');
+    for (const token of Object.values(tokens)) assertPrivate(app, token);
   }
-  for (const mode of ['member', 'agent', 'auto']) {
-    const options = mode === 'member' ? { hash: '#k=' + encodeURIComponent(tokens.a) } : { pathname: '/' };
-    // Explicit agent mode is available when restoring a previously saved session;
-    // the form deliberately offers no mode selector and uses auto detection.
-    if (mode === 'agent') options.sessionStorage = new Map([[sessionKey, JSON.stringify({ key: tokens.a, mode })]]);
+  for (const mode of ['member', 'auto', 'agent']) {
+    const options = { pathname: mode === 'member' ? '/t/' + input.team : '/',
+      ...(mode === 'member' ? { hash: '#k=' + encodeURIComponent(tokens.a) } : {}) };
     const first = browser(input, request, options);
-    if (mode === 'auto') await login(first, tokens.a); else await idle(first);
+    if (mode === 'member') await idle(first); else await login(first, tokens.a);
     assert.equal(first.get('auth').hidden, true, mode + ' session authenticates');
-    assertSession(first, tokens.a, mode);
-
-    const reload = browser(input, request, { pathname: first.location.pathname, sessionStorage: first.sessionStorage });
+    assertSessionCredential(first, tokens.a); assertPrivate(first, tokens.a);
+    if (mode === 'member') assert.ok(first.calls.every(call => !call.url.startsWith('/v1/')), 'team-URL member session uses member routes');
+    const keys = first.get('tasks').querySelectorAll('.key').map(node => node.textContent).sort();
+    const transcript = first.get('messages').querySelectorAll('article').map(node => node.textContent);
+    assert.ok(keys.length > 0 && transcript.length > 0, 'session has complete board and transcript');
+    // Sharing only the network cookie jar models reopening a closed tab: not a
+    // sessionStorage carry-over and not a key available to the page VM.
+    const reload = browser(input, request, { pathname: first.location.pathname, localStorage: first.storage, cookieJar: first.cookieJar });
     await idle(reload);
-    assert.equal(reload.get('auth').hidden, true, mode + ' session resumes without entering a key');
+    assert.equal(reload.get('auth').hidden, true, mode + ' reopened tab needs no manual key');
     assert.equal(reload.get('workspace').hidden, false);
-    assert.equal(reload.calls[0].url, mode === 'member' ? '/api/state' : '/v1/dashboard/state?after=0', 'reload honors the saved ' + mode + ' mode');
-    for (const call of reload.calls) assert.equal(call.options.headers.Authorization, 'Bearer ' + tokens.a);
-    if (mode === 'member') assert.ok(reload.calls.every(call => !call.url.startsWith('/v1/')));
-    else {
-      assert.ok(reload.calls.some(call => call.url.startsWith('/api/legacy/transcript?') && call.status === 200), 'restored agent session reads the member-authorized transcript');
-      assert.ok(reload.calls.filter(call => call.url.startsWith('/api/')).every(call => call.url === '/api/state' || call.url.startsWith('/api/legacy/transcript?')), 'agent sessions use member routes only for the human transcript');
-    }
-    assertSession(reload, tokens.a, mode);
-
+    assert.equal(reload.calls[0].url, '/api/state', 'boot always checks the cookie');
+    assertSessionCredential(reload, tokens.a);
+    assert.ok(!reload.calls.some(call => call.url === '/auth/login'), 'reload never replays an access key');
+    assert.ok(reload.calls.some(call => call.url.startsWith('/api/legacy/transcript?') && call.status === 200));
+    assert.deepEqual(reload.get('tasks').querySelectorAll('.key').map(node => node.textContent).sort(), keys);
+    assert.deepEqual(reload.get('messages').querySelectorAll('article').map(node => node.textContent), transcript);
+    assertPrivate(reload, tokens.a);
+    const fresh = browser(input, request, { pathname: first.location.pathname }); await idle(fresh);
+    assertLocked(fresh, 'fresh browser profile');
     await reload.get('sign-out').click(); await idle(reload);
-    assert.equal(reload.sessionStorage.has(sessionKey), false, mode + ' sign-out removes the saved session');
-    const signedOut = browser(input, request, { pathname: reload.location.pathname, sessionStorage: reload.sessionStorage });
-    await idle(signedOut);
-    assert.equal(signedOut.calls.length, 0, 'reload after ' + mode + ' sign-out makes no authenticated request');
-    assert.equal(signedOut.get('auth').hidden, false);
-    assert.equal(signedOut.get('workspace').hidden, true);
-    assertPrivate(signedOut, tokens.a);
+    assert.equal(reload.cookieJar.has('agentmesh_session'), false, 'sign-out clears the persistent cookie');
+    assert.ok(reload.calls.some(call => call.url === '/auth/logout' && call.options.method === 'POST'));
+    const signedOut = browser(input, request, { pathname: reload.location.pathname, localStorage: reload.storage, cookieJar: reload.cookieJar });
+    await idle(signedOut); assertLocked(signedOut, mode + ' signed-out reopened tab');
   }
-
   const fragment = browser(input, request, { hash: '#k=' + encodeURIComponent(tokens.a),
     sessionStorage: new Map([[sessionKey, JSON.stringify({ key: tokens.b, mode: 'agent' })]]) });
   await idle(fragment);
-  assert.equal(fragment.get('auth').hidden, true, 'fragment wins over a saved session');
-  assert.equal(fragment.calls[0].url, '/api/state', 'fragment always uses member mode');
-  assert.ok(fragment.calls.every(call => call.options.headers.Authorization === 'Bearer ' + tokens.a), 'saved credential is not used when a fragment is supplied');
-  assert.equal(fragment.location.hash, '', 'fragment credential is removed from the URL');
-  assert.ok(fragment.historyCalls.length);
-  assertSession(fragment, tokens.a, 'member');
-
-  for (const mode of ['member', 'agent', 'auto']) {
-    const rejected = browser(input, request, { pathname: '/',
-      sessionStorage: new Map([[sessionKey, JSON.stringify({ key: tokens.viewer, mode })]]) });
-    await idle(rejected);
-    assert.equal(rejected.get('auth').hidden, false, 'rejected saved ' + mode + ' credential returns to authentication');
-    assert.equal(rejected.get('workspace').hidden, true);
-    assert.equal(rejected.sessionStorage.has(sessionKey), false, 'rejected saved ' + mode + ' credential is removed');
-    assert.equal(rejected.timers.size, 0);
-    assertPrivate(rejected, tokens.viewer);
-    const reload = browser(input, request, { pathname: '/', sessionStorage: rejected.sessionStorage }); await idle(reload);
-    assert.equal(reload.calls.length, 0, 'rejected credential is not retried on reload');
-    assert.equal(reload.get('auth').hidden, false);
+  assert.equal(fragment.get('auth').hidden, true, 'fragment signs in despite an obsolete saved key');
+  assert.equal(fragment.calls.find(call => call.url === '/auth/login').options.body, JSON.stringify({key: tokens.a}));
+  assert.equal(fragment.location.hash, ''); assert.ok(fragment.historyCalls.length);
+  assertSessionCredential(fragment, tokens.a); assertPrivate(fragment, tokens.b);
+  const invalidSessions = ['not JSON', 'null', '[]', '{}', JSON.stringify({ key: 'short', mode: 'agent' }),
+    JSON.stringify({ key: 12345, mode: 'auto' }), JSON.stringify({ key: tokens.a, mode: 'viewer' }), JSON.stringify({ key: tokens.a })];
+  for (const saved of invalidSessions) {
+    const invalid = browser(input, request, { pathname: '/', sessionStorage: new Map([[sessionKey, saved]]) });
+    await idle(invalid); assertLocked(invalid, 'obsolete saved session');
+  }
+  for (const mode of ['member', 'agent', 'auto']) for (const token of [tokens.a, tokens.viewer]) {
+    const restored = browser(input, request, { pathname: '/',
+      localStorage: new Map([['papers-theme', 'dark'], ['agentmesh-agent', token], ['agentmesh-viewer', token], ['agentmesh-access-mode', mode]]),
+      sessionStorage: new Map([[sessionKey, JSON.stringify({ key: token, mode })], ['agentmesh:root', JSON.stringify({ key: token })]]) });
+    await idle(restored);
+    for (const key of ['agentmesh-agent', 'agentmesh-viewer', 'agentmesh-access-mode']) assert.equal(restored.storage.has(key), false, 'obsolete local credential is removed');
+    assert.equal(restored.sessionStorage.has('agentmesh:root'), false);
+    assert.equal(restored.storage.get('papers-theme'), 'dark', 'cleanup preserves safe preferences');
+    assertLocked(restored, 'saved ' + mode + ' credential is not migrated into JavaScript');
+    const reload = browser(input, request, { pathname: '/', localStorage: restored.storage, sessionStorage: restored.sessionStorage });
+    await idle(reload); assertLocked(reload, 'cleared obsolete session reload');
+    await login(reload, tokens.a);
+    assert.ok(reload.get('tasks').querySelectorAll('.task-card').length > 0);
+    assert.ok(reload.get('messages').querySelectorAll('article').length > 0);
+    assertPrivate(reload, token); assertPrivate(reload, tokens.a);
   }
 }
 
@@ -790,6 +932,6 @@ module.exports = { browser, parseDocument, idle, login, poll, findButton, click,
 
 if (require.main === module) (async () => {
   const payload = process.argv[2] ? JSON.parse(process.argv[2]) : null;
-  if (payload) await run((route, options) => fetch(payload.origin + route, options), payload.tokens);
+  if (payload) { const request = (route, options) => fetch(payload.origin + route, options); request.origin = payload.origin; await run(request, payload.tokens); }
   else await runWorker();
 })().catch(error => { console.error(error); process.exitCode = 1; });
