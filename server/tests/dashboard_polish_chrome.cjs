@@ -561,8 +561,11 @@ async function main(settings) {
   } finally { for (const session of sessions) session.close(); browser.close(); }
 }
 
-(async () => {
-  let input = '';
-  for await (const chunk of process.stdin) input += chunk;
-  await main(JSON.parse(input));
-})().catch(error => { console.error(error); process.exitCode = 1; });
+module.exports = { connect };
+if (require.main === module) {
+  (async () => {
+    let input = '';
+    for await (const chunk of process.stdin) input += chunk;
+    await main(JSON.parse(input));
+  })().catch(error => { console.error(error); process.exitCode = 1; });
+}
