@@ -139,6 +139,9 @@ function browser(input, request, options = {}) {
   const dom = build(input.tree), get = id => { const node = ids.get(id); return node && dom.contains(node) ? node : null; };
   document = {
     documentElement: dom.querySelector('html'), activeElement: null, title: '',
+    styleSheets: [{ cssRules: [],
+      insertRule(rule, index) { this.cssRules.splice(index, 0, rule); },
+      deleteRule(index) { this.cssRules.splice(index, 1); } }],
     getElementById: get, createElement: tag => new Element(tag),
     createTextNode: value => { const node = new Element('#text'); node.textContent = value; return node; },
     createDocumentFragment: () => new Element('#fragment'),

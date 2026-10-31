@@ -582,6 +582,63 @@
         if (value !== undefined && value !== null) node.textContent = String(value);
         return node;
       };
+      let redrawing = false;
+      // One synchronous transaction for all renderers, including nested redraws.
+      // Match replaced anonymous scrollers by their path below the nearest ID.
+      function stableRedraw(render) {
+        return function (...args) {
+          if (redrawing) return render.apply(this, args);
+          const page = document.scrollingElement || document.documentElement;
+          const top = page.scrollTop, left = page.scrollLeft;
+          const positions = [];
+          for (const node of document.querySelectorAll("*")) {
+            if (node === page || !(node.scrollTop || node.scrollLeft ||
+                node.clientHeight && node.scrollHeight > node.clientHeight ||
+                node.clientWidth && node.scrollWidth > node.clientWidth)) continue;
+            let parent = node;
+            const path = [];
+            while (!parent.id && parent.parentElement) {
+              path.unshift(Array.from(parent.parentElement.children).indexOf(parent));
+              parent = parent.parentElement;
+            }
+            positions.push({ node, id: parent.id, path, top: node.scrollTop, left: node.scrollLeft });
+          }
+          // CSSOM rules use the existing nonce-authorized sheet, never style attributes.
+          const sheet = document.styleSheets[0], index = sheet.cssRules.length;
+          sheet.insertRule("html, html * { overflow-anchor: none !important; scroll-behavior: auto !important; }", index);
+          sheet.insertRule("html { min-height: " + page.scrollHeight + "px !important; }", index + 1);
+          redrawing = true;
+          try { return render.apply(this, args); }
+          finally {
+            // Release the height before restoring, so a real content shrink is clamped
+            // only to the final scroll range, not an intermediate empty section.
+            sheet.deleteRule(index + 1);
+            for (const saved of positions) {
+              let node = saved.node;
+              if (!document.documentElement.contains(node)) {
+                node = get(saved.id);
+                for (const child of saved.path) node = node?.children[child];
+              }
+              if (node) { node.scrollTop = saved.top; node.scrollLeft = saved.left; }
+            }
+            page.scrollTop = top; page.scrollLeft = left;
+            sheet.deleteRule(index);
+            redrawing = false;
+          }
+        };
+      }
+      preserveView = stableRedraw(preserveView);
+      renderMessages = stableRedraw(renderMessages);
+      renderTasks = stableRedraw(renderTasks);
+      renderPatches = stableRedraw(renderPatches);
+      renderAudit = stableRedraw(renderAudit);
+      renderMaster = stableRedraw(renderMaster);
+      renderHuddles = stableRedraw(renderHuddles);
+      renderClaims = stableRedraw(renderClaims);
+      renderQuestions = stableRedraw(renderQuestions);
+      renderTeam = stableRedraw(renderTeam);
+      renderAttention = stableRedraw(renderAttention);
+      renderNews = stableRedraw(renderNews);
       const timestamp = (value) => {
         if (value === null || value === undefined) return "—";
         const date = new Date(value);
@@ -771,6 +828,7 @@
         return node;
       }
       const sectionNav = (() => {
+        refresh = stableRedraw(refresh);
         const groups = [
           ["Work", [["board", "Board", "task-count", ["board-panel"]], ["timeline", "Timeline", "timeline-count", ["timeline-panel"]], ["plans", "Plans / Master prompt", "master-count", ["plans-panel"]], ["claims", "Claims", "claim-count", ["claims-panel"]]]],
           ["Conversation", [["transcript", "Transcript", "message-count", ["transcript-panel", "asks"]], ["questions", "Questions", "question-count", ["questions-panel"]], ["huddles", "Huddles", "huddle-count", ["huddles-panel"]]]],
@@ -869,6 +927,10 @@
       })();
       // One in-memory index shared by both existing access paths. No extra reads.
       const enhancements = (() => {
+        renderViews = stableRedraw(renderViews);
+        renderSearch = stableRedraw(renderSearch);
+        renderTimeline = stableRedraw(renderTimeline);
+        working = stableRedraw(working);
         let tasks = [], messages = [], questions = [], huddles = [], members = [], events = [];
         let mine = null, memberMode = false, taskHistory = null, questionHistory = null, messageHistory = null, eventHistory = null;
         let timeline = false, notifications = false, revision = 0, extraTimer = null;
@@ -1939,33 +2001,35 @@
           if (me !== data.me) rendered = {};
           me = data.me;
           data.claims = data.claims.filter((row) => new Date(row.expires_at).getTime() > Date.now());
-          snapshot = data;
-          teamSnapshot = teamState;
-          for (const [name, id, render] of [["messages", "messages", renderMessages], ["tasks", "tasks", renderTasks], ["patches", "patches", renderPatches], ["audit", "audit", renderAudit], ["master_prompt", "master", renderMaster], ["huddles", "huddles", renderHuddles], ["claims", "claims", renderClaims], ["questions", "questions", renderQuestions], ["news", "news", renderNews]]) {
-            if (name === "tasks" && data.team_transcript && !teamState) {
-              get("tasks").replaceChildren(element("p", "empty board-empty", "Team tasks unavailable. Retrying on the next refresh."));
-              get("task-count").textContent = "Unavailable";
-              delete rendered.tasks;
-              continue;
+          stableRedraw(() => {
+            snapshot = data;
+            teamSnapshot = teamState;
+            for (const [name, id, render] of [["messages", "messages", renderMessages], ["tasks", "tasks", renderTasks], ["patches", "patches", renderPatches], ["audit", "audit", renderAudit], ["master_prompt", "master", renderMaster], ["huddles", "huddles", renderHuddles], ["claims", "claims", renderClaims], ["questions", "questions", renderQuestions], ["news", "news", renderNews]]) {
+              if (name === "tasks" && data.team_transcript && !teamState) {
+                get("tasks").replaceChildren(element("p", "empty board-empty", "Team tasks unavailable. Retrying on the next refresh."));
+                get("task-count").textContent = "Unavailable";
+                delete rendered.tasks;
+                continue;
+              }
+              const signature = JSON.stringify(name === "tasks" && teamState ? teamState : data[name]) + (["claims", "questions"].includes(name) ? JSON.stringify(data.tasks.map((task) => [task.id, task.title])) : "");
+              if (signature !== rendered[name]) {
+                if (["messages", "audit", "news"].includes(name)) render(data[name]);
+                else preserveView(id, () => render(data[name], name === "tasks" ? teamState : null));
+                rendered[name] = signature;
+              }
             }
-            const signature = JSON.stringify(name === "tasks" && teamState ? teamState : data[name]) + (["claims", "questions"].includes(name) ? JSON.stringify(data.tasks.map((task) => [task.id, task.title])) : "");
-            if (signature !== rendered[name]) {
-              if (["messages", "audit", "news"].includes(name)) render(data[name]);
-              else preserveView(id, () => render(data[name], name === "tasks" ? teamState : null));
-              rendered[name] = signature;
-            }
-          }
-          preserveView("members", () => renderTeam(data));
-          renderAttention(data);
-          enhancements.events(data.news);
-          enhancements.huddles(data.huddles);
-          lastEventId = data.last_event_id;
-          const now = new Date();
-          get("last-updated").textContent = now.toLocaleTimeString();
-          get("last-updated").dateTime = now.toISOString();
-          get("access-description").textContent = "Two agents. One shared workspace. Participating as " + me + ".";
-          get("asks-hint").textContent = "Use the controls below to respond as " + me + ". Your agent can also respond from its own session.";
-          setStatus("Live · " + me, "live");
+            preserveView("members", () => renderTeam(data));
+            renderAttention(data);
+            enhancements.events(data.news);
+            enhancements.huddles(data.huddles);
+            lastEventId = data.last_event_id;
+            const now = new Date();
+            get("last-updated").textContent = now.toLocaleTimeString();
+            get("last-updated").dateTime = now.toISOString();
+            get("access-description").textContent = "Two agents. One shared workspace. Participating as " + me + ".";
+            get("asks-hint").textContent = "Use the controls below to respond as " + me + ". Your agent can also respond from its own session.";
+            setStatus("Live · " + me, "live");
+          })();
         } catch (error) {
           if (session === currentSession && !requestController.signal.aborted) setStatus("Connection interrupted · retrying every 4 seconds", "warning");
         } finally {
@@ -1995,6 +2059,19 @@
       }
       // Team feature behavior is ported from hub_dashboard.html; attribution: docs/THIRD_PARTY.md.
       const hub = (() => {
+        renderAll = stableRedraw(renderAll);
+        renderMembers = stableRedraw(renderMembers);
+        renderRules = stableRedraw(renderRules);
+        renderBoard = stableRedraw(renderBoard);
+        renderHuddles = stableRedraw(renderHuddles);
+        renderPrompt = stableRedraw(renderPrompt);
+        renderFeed = stableRedraw(renderFeed);
+        renderHeartbeats = stableRedraw(renderHeartbeats);
+        renderQuestions = stableRedraw(renderQuestions);
+        renderClaims = stableRedraw(renderClaims);
+        renderHuddleCreate = stableRedraw(renderHuddleCreate);
+        renderAsks = stableRedraw(renderAsks);
+        handleBlock = stableRedraw(handleBlock);
         let state = null, lastId = 0, stopped = true, generation = 0;
         let polling = false, busy = false, streaming = false, refreshTimer = null, retryTimer = null, retryResolve = null;
         let refreshRevision = 0;
@@ -2672,8 +2749,7 @@
           const r = await api(`/api/events?tail=${FEED_MAX}`);
           addEvents(r?.events || []);
           if (state?.last_event_id > lastId) lastId = state.last_event_id;
-          renderFeed();
-          renderQuestions();
+          stableRedraw(() => { renderFeed(); renderQuestions(); })();
         }
 
 
@@ -2840,23 +2916,27 @@
             const data = await api("/api/legacy/transcript?team=" + encodeURIComponent(state.team.id) + "&after=" + lastEventId);
             if (generation !== run || stopped) return;
             if (![data.messages, data.patches, data.audit].every(Array.isArray)) throw new Error("Invalid legacy snapshot.");
-            for (const [name, render] of [["messages", renderMessages], ["patches", renderPatches], ["audit", renderAudit]]) {
-              const signature = JSON.stringify(data[name]);
-              if (rendered[name] !== signature) {
-                if (name === "patches") preserveView(name, () => render(data[name]));
-                else render(data[name]);
-                rendered[name] = signature;
+            stableRedraw(() => {
+              for (const [name, render] of [["messages", renderMessages], ["patches", renderPatches], ["audit", renderAudit]]) {
+                const signature = JSON.stringify(data[name]);
+                if (rendered[name] !== signature) {
+                  if (name === "patches") preserveView(name, () => render(data[name]));
+                  else render(data[name]);
+                  rendered[name] = signature;
+                }
               }
-            }
-            lastEventId = data.last_event_id || 0;
+              lastEventId = data.last_event_id || 0;
+            })();
           } catch (error) {
             if (generation !== run || stopped) return;
-            enhancements.messages([]);
-            for (const name of ["messages", "patches", "audit"]) delete rendered[name];
-            for (const id of ["message-count", "patch-count", "audit-count"]) get(id).textContent = "0";
-            for (const id of ["messages", "patches", "audit"]) {
-              clear($("#" + id)).append(h("p", { class: "empty", text: id === "messages" ? "Team transcript unavailable. Retrying on the next refresh." : "Legacy adapter unavailable. These panels are available only to the default team." }));
-            }
+            stableRedraw(() => {
+              enhancements.messages([]);
+              for (const name of ["messages", "patches", "audit"]) delete rendered[name];
+              for (const id of ["message-count", "patch-count", "audit-count"]) get(id).textContent = "0";
+              for (const id of ["messages", "patches", "audit"]) {
+                clear($("#" + id)).append(h("p", { class: "empty", text: id === "messages" ? "Team transcript unavailable. Retrying on the next refresh." : "Legacy adapter unavailable. These panels are available only to the default team." }));
+              }
+            })();
           }
         }
         async function poll() {

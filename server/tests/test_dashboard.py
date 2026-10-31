@@ -205,6 +205,9 @@ function browser(snapshot, options = {}) {
   };
   document = {
     documentElement: root.querySelector('html'), activeElement: null,
+    styleSheets: [{ cssRules: [],
+      insertRule(rule, index) { this.cssRules.splice(index, 0, rule); },
+      deleteRule(index) { this.cssRules.splice(index, 1); } }],
     getElementById: get, createElement: tag => new Element(tag),
     createDocumentFragment: () => new Element('#fragment'),
     querySelectorAll: selector => root.querySelectorAll(selector), addEventListener() {},
