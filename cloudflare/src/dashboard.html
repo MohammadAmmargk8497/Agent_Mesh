@@ -363,7 +363,7 @@
       };
       const empty = (container, text) => container.append(element("p", "empty", text));
       let key = "", lastEventId = 0, session = 0, timer = null, controller = null;
-      let rendered = {}, snapshot = null, selectedHuddle = null;
+      let rendered = {}, snapshot = null, teamSnapshot = null, selectedHuddle = null;
       let accessMode = "auto", me = null, writing = false, writeController = null;
       const drafts = new Map(), editingSections = new Set();
       const agents = ["agent-a", "agent-b"];
@@ -561,6 +561,7 @@
         lastEventId = 0;
         rendered = {};
         snapshot = null;
+        teamSnapshot = null;
         selectedHuddle = null;
       }
       function showAuth(message = "", focus = false) {
@@ -624,7 +625,21 @@
         if (first || atBottom) container.scrollTop = container.scrollHeight;
         get("message-count").textContent = String(rows.length);
       }
-      function renderTasks(rows) {
+      function renderTasks(rows, teamState = null) {
+        if (teamState) {
+          const nameOf = (id) => teamState.members.find((member) => member.id === id)?.name || "Unassigned";
+          rows = teamState.tasks.map((task) => ({
+            ...task, id: task.key, assignee: nameOf(task.assignee_id || task.proposed_id),
+            file_areas: task.area,
+            acceptance_criteria: task.acceptance ? [task.acceptance] : [], result: task.note,
+            waiting_on: (task.depends_on || []).filter((key) => teamState.tasks.find((task) => task.key === key)?.status !== "done")
+          }));
+        }
+        const reference = (id) => {
+          if (!teamState) return taskRef(id);
+          const task = rows.find((row) => row.id === id);
+          return id + (task ? " · " + task.title : "");
+        };
         const container = get("tasks");
         const fragment = document.createDocumentFragment();
         const completed = rows.filter((row) => ["done", "accepted"].includes(row.status)).length;
@@ -646,13 +661,13 @@
           const card = element("article", "task-card" + (row.assignee === "agent-b" ? " from-b" : "") + (done ? " is-done" : ""));
           const heading = element("div", "item-heading");
           const state = row.status === "blocked" ? " blocked" : ["open", "in_progress"].includes(row.status) ? " active" : "";
-          heading.append(element("span", "meta", shortId(row.id)), element("span", "badge" + state, words(taskStatus(row))));
-          card.append(heading, element("h4", "item-title", row.title), element("div", "meta " + agentClass(row.assignee), row.created_by + " → " + row.assignee));
+          heading.append(element("span", teamState ? "key" : "meta", teamState ? row.id : shortId(row.id)), element("span", "badge" + state, words(taskStatus(row))));
+          card.append(heading, element("h4", "item-title", row.title), element("div", "meta " + agentClass(row.assignee), teamState ? (row.proposed_id ? "Proposed to: " : "Assignee: ") + row.assignee : row.created_by + " → " + row.assignee));
           card.append(element("div", "meta", "Owner: " + (row.owner || row.assignee || "—")));
           if (row.contract) card.append(element("span", "badge active", "Contract / skeleton"));
           if (!done) {
             const waiting = row.waiting_on || [];
-            card.append(element("p", "flag" + (waiting.length || row.status === "blocked" ? " wait" : ""), waiting.length ? "Waiting on: " + waiting.map(taskRef).join(", ") : row.status === "blocked" ? "Blocked" : "Ready"));
+            card.append(element("p", "flag" + (waiting.length || row.status === "blocked" ? " wait" : ""), waiting.length ? "Waiting on: " + waiting.map(reference).join(", ") : row.status === "blocked" ? "Blocked" : "Ready"));
           }
           const details = element("details");
           details.dataset.id = String(row.id);
@@ -662,7 +677,8 @@
           const body = element("div", "details-body");
           body.append(element("p", "description", row.description));
           if (row.file_areas && row.file_areas.length) body.append(element("div", "meta", "File areas: " + row.file_areas.join(", ")));
-          if (row.depends_on && row.depends_on.length) body.append(element("div", "meta", "Depends on: " + row.depends_on.map(taskRef).join(", ")));
+          if (row.depends_on && row.depends_on.length) body.append(element("div", "meta", "Depends on: " + row.depends_on.map(reference).join(", ")));
+          if (row.branch) body.append(element("div", "meta", "Branch: " + row.branch));
           if (Array.isArray(row.acceptance_criteria) && row.acceptance_criteria.length) {
             body.append(element("h3", "", "Acceptance criteria"));
             const list = element("ul");
@@ -675,10 +691,12 @@
           card.append(details);
           if (canWrite()) {
             const actions = element("div", "write-actions");
-            const status = taskStatus(row), mine = row.assignee === me;
+            const status = taskStatus(row), mine = teamState ? (row.assignee_id || row.proposed_id) === teamState.me.id : row.assignee === me;
             const taskAction = (action, label) => {
-              const path = "/v1/dashboard/tasks/" + routeId(row.id) + "/" + action;
-              actions.append(actionButton(label, path, "task-" + action, () => mutate(path, {}, "Task " + words(action) + " saved.")));
+              const path = teamState ? "/api/task" : "/v1/dashboard/tasks/" + routeId(row.id) + "/" + action;
+              const button = actionButton(label, path, "task-" + action, () => mutate(path, teamState ? { action, key: row.id } : {}, "Task " + words(action) + " saved."));
+              if (teamState) button.dataset.focus = "task-" + action + ":" + row.id;
+              actions.append(button);
             };
             if (status === "proposed" && mine) { taskAction("accept", "Accept"); taskAction("decline", "Decline"); }
             else if (["open", "proposed"].includes(status)) taskAction("take", "Take it");
@@ -686,13 +704,16 @@
               if (!(row.waiting_on || []).length) taskAction("start", "Start");
               taskAction("release", "Release");
             }
-            if (status === "in_progress" && mine) taskAction("release", "Release");
-            if (row.created_by === me && ["done", "blocked"].includes(row.status)) {
+            if (status === "in_progress" && mine) {
+              if (teamState) taskAction("done", "Mark done");
+              taskAction("release", "Release");
+            }
+            if (!teamState && row.created_by === me && ["done", "blocked"].includes(row.status)) {
               const path = "/v1/tasks/" + routeId(row.id) + "/review";
               for (const [decision, label] of [["accept", "Accept result"], ["reopen", "Reopen"]]) actions.append(actionButton(label, path, "task-review-" + decision, () => mutate(path, { decision }, "Task review saved.")));
             }
             if (actions.childElementCount) card.append(actions);
-            if (status === "in_progress" && mine) {
+            if (!teamState && status === "in_progress" && mine) {
               const id = fieldId("task-finish-summary", row.id), path = "/v1/dashboard/tasks/" + routeId(row.id) + "/finish";
               card.append(writeForm(fieldId("task-finish-form", row.id), "Finish task", [inputField(id, "Summary (optional)", { multiline: true, required: false })], "Mark done", path, "task-finish", () => mutate(path, optional({}, "summary", id), "Task completed.", [id])));
             }
@@ -1209,16 +1230,19 @@
           const data = await response.json();
           if (session !== currentSession || controller !== requestController) return;
           if (![data.messages, data.tasks, data.patches, data.audit, data.events].every(Array.isArray) || !Number.isSafeInteger(data.last_event_id)) throw new Error("Invalid snapshot");
-          // The transcript is a human-facing team read, even beside agent controls.
+          // The board and transcript are team reads, even beside legacy agent controls.
           // Standalone legacy servers can omit this capability and keep their snapshot.
+          let teamState = teamSnapshot;
           if (data.team_transcript) {
             try {
               const options = { headers: { Authorization: "Bearer " + key }, cache: "no-store", signal: requestController.signal };
               const memberResponse = await fetch("/api/state", options);
               if (session !== currentSession || controller !== requestController) return;
+              if ([401, 403].includes(memberResponse.status)) teamState = null;
               if (memberResponse.ok) {
                 const member = await memberResponse.json();
                 if (session !== currentSession || controller !== requestController) return;
+                if (member.team?.id && member.me?.id && Array.isArray(member.tasks) && Array.isArray(member.members)) teamState = member;
                 if (member.team?.id) {
                   const transcriptResponse = await fetch("/api/legacy/transcript?team=" + encodeURIComponent(member.team.id), options);
                   if (transcriptResponse.ok) {
@@ -1241,11 +1265,18 @@
           me = data.me;
           data.claims = data.claims.filter((row) => new Date(row.expires_at).getTime() > Date.now());
           snapshot = data;
+          teamSnapshot = teamState;
           for (const [name, id, render] of [["messages", "messages", renderMessages], ["tasks", "tasks", renderTasks], ["patches", "patches", renderPatches], ["audit", "audit", renderAudit], ["master_prompt", "master", renderMaster], ["huddles", "huddles", renderHuddles], ["claims", "claims", renderClaims], ["questions", "questions", renderQuestions], ["news", "news", renderNews]]) {
-            const signature = JSON.stringify(data[name]) + (["claims", "questions"].includes(name) ? JSON.stringify(data.tasks.map((task) => [task.id, task.title])) : "");
+            if (name === "tasks" && data.team_transcript && !teamState) {
+              get("tasks").replaceChildren(element("p", "empty board-empty", "Team tasks unavailable. Retrying on the next refresh."));
+              get("task-count").textContent = "Unavailable";
+              delete rendered.tasks;
+              continue;
+            }
+            const signature = JSON.stringify(name === "tasks" && teamState ? teamState : data[name]) + (["claims", "questions"].includes(name) ? JSON.stringify(data.tasks.map((task) => [task.id, task.title])) : "");
             if (signature !== rendered[name]) {
               if (["messages", "audit", "news"].includes(name)) render(data[name]);
-              else preserveView(id, () => render(data[name]));
+              else preserveView(id, () => render(data[name], name === "tasks" ? teamState : null));
               rendered[name] = signature;
             }
           }

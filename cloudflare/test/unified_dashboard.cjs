@@ -236,6 +236,7 @@ async function run(request, tokens) {
     const data = await response.json(); assert.equal(response.status, 200, route + ': ' + JSON.stringify(data)); return data;
   }
   const initial = await api('/api/state'); input.team = initial.team.id;
+  await runTeamBoard(input, request, api, tokens);
   await runTranscript(input, request, api, tokens);
   await runSessions(input, request, tokens, html);
   const empty = browser(input, request); await idle(empty);
@@ -374,6 +375,146 @@ async function run(request, tokens) {
 
   await runActions(input, request, api, tokens);
   console.log('Unified dashboard panels, member sessions, hub actions, presence, safe names and team scoping passed');
+}
+
+async function runTeamBoard(input, request, api, tokens) {
+  const legacyTitle = 'Legacy task must not replace the full team plan';
+  const legacy = await request('/v1/tasks', {
+    method: 'POST', headers: { Authorization: 'Bearer ' + tokens.a, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title: legacyTitle, description: 'Distinct legacy task list', assignee: 'agent-a' }),
+  });
+  assert.equal(legacy.status, 201);
+  assert.equal((await api('/api/state')).tasks.length, 0, 'the legacy and team task stores are distinct');
+
+  const app = browser(input, request, { pathname: '/' });
+  await login(app, tokens.a);
+  assert.equal(app.get('task-count').textContent, '0 of 0 done', 'an empty team never falls back to legacy tasks');
+  assert.equal(app.get('tasks').querySelectorAll('.task-card').length, 0);
+  assert.ok(!app.get('tasks').textContent.includes(legacyTitle));
+
+  const newestTitle = 'Newest team task <img id="team-board-injected" src=x onerror=alert(1)>';
+  const tasks = Array.from({ length: 55 }, (_, index) => {
+    const number = index + 1;
+    return { key: 'T' + number, title: number === 55 ? newestTitle : 'Team board task T' + number,
+      ...([39, 40, 41, 43, 54].includes(number) ? { assignee: 'agent-a' } : {}),
+      ...([42, 44, 45].includes(number) ? { assignee: 'agent-b' } : {}),
+      ...(number === 54 ? { depends_on: ['T55'] } : {}),
+    };
+  });
+  assert.equal((await api('/api/plan', { tasks })).tasks.length, 55);
+  for (let number = 1; number <= 38; number++) {
+    await api('/api/task', { key: 'T' + number, action: 'start' });
+    await api('/api/task', { key: 'T' + number, action: 'done' });
+  }
+  for (const number of [39, 40, 54]) await api('/api/task', { key: 'T' + number, action: 'accept' });
+  await api('/api/task', { key: 'T40', action: 'start' });
+  for (const number of [44, 45]) await api('/api/task', { key: 'T' + number, action: 'accept' }, tokens.b);
+  await api('/api/task', { key: 'T44', action: 'start' }, tokens.b);
+
+  const card = key => app.get('tasks').querySelectorAll('.task-card').find(node => node.querySelector('.key')?.textContent === key);
+  const actions = key => card(key).querySelectorAll('[data-action]').map(node => node.dataset.action);
+  function assertBoard(current, count = '38 of 55 done') {
+    assert.equal(current.location.pathname, '/', 'the full board stays on the one root page');
+    assert.equal(current.get('task-count').textContent, count);
+    assert.equal(current.get('tasks').querySelectorAll('.task-card').length, 55);
+    assert.deepEqual(current.get('tasks').querySelectorAll('.key').map(node => node.textContent).sort(), tasks.map(task => task.key).sort(), 'every team task key is visible');
+    assert.ok(current.get('tasks').textContent.includes(newestTitle), 'the newest task is not truncated out of the board');
+    assert.ok(!current.get('tasks').textContent.includes(legacyTitle), 'legacy tasks cannot overwrite the team plan');
+    assert.equal(current.get('tasks').querySelectorAll('img').length, 0, 'task titles stay literal text');
+    assert.ok(current.get('auto-respond'), 'legacy agent settings remain available beside the team task board');
+  }
+  await poll(app);
+  assertBoard(app);
+  assert.deepEqual(JSON.parse(app.sessionStorage.get('agentmesh:session')), { key: tokens.a, mode: 'auto' });
+  for (const [key, status, column] of [
+    ['T1', 'done', 'Done / closed'], ['T39', 'assigned', 'Assigned'],
+    ['T40', 'in progress', 'In progress / blocked'], ['T41', 'proposed', 'Proposed / open'], ['T55', 'open', 'Proposed / open'],
+  ]) {
+    assert.equal(card(key).querySelector('.badge').textContent.toLowerCase(), status);
+    assert.ok(card(key).closest('.board-column').querySelector('.column-heading').textContent.startsWith(column));
+  }
+  assert.ok(card('T40').textContent.includes('agent-a'));
+  assert.ok(card('T44').textContent.includes('agent-b'));
+  assert.equal(actions('T44').length, 0, 'another member\'s active task has no assignee-only actions');
+  assert.equal(actions('T45').length, 0, 'another member\'s assigned task has no assignee-only actions');
+  assert.ok(!actions('T54').includes('task-start'), 'incomplete team dependencies prevent starting');
+  assert.ok(card('T54').textContent.includes('Waiting on: T55'), 'team dependency keys are not UUID-shortened');
+  assert.ok(!card('T1').textContent.includes('Accept result'), 'team task cards never offer legacy result review');
+  assert.equal(card('T40').querySelectorAll('form').length, 0, 'team completion does not use a legacy finish form');
+  for (const id of ['members', 'rules', 'questions', 'claims', 'master', 'huddle-list', 'news', 'messages', 'patches', 'audit', 'member-heartbeats', 'coordination']) {
+    assert.ok(app.get(id), 'the existing ' + id + ' panel remains on the same page');
+  }
+  assert.equal(app.document.documentElement.getAttribute('data-theme'), 'dark');
+
+  let teamUnavailable = false;
+  const interrupted = browser(input, (route, options) => {
+    if (teamUnavailable && route === '/api/state') return Promise.resolve(new Response('{}', { status: 503 }));
+    return request(route, options);
+  }, { pathname: '/' });
+  await login(interrupted, tokens.a);
+  assertBoard(interrupted);
+  teamUnavailable = true;
+  await poll(interrupted);
+  assertBoard(interrupted);
+  teamUnavailable = false;
+  await poll(interrupted);
+  assertBoard(interrupted);
+  await interrupted.get('sign-out').click(); await idle(interrupted);
+  assert.equal(interrupted.get('tasks').querySelectorAll('.task-card').length, 0, 'sign-out clears the cached team board');
+  teamUnavailable = true;
+  await login(interrupted, tokens.a);
+  assert.equal(interrupted.get('tasks').querySelectorAll('.task-card').length, 0, 'a new session cannot reuse the previous team snapshot or legacy tasks');
+  assert.equal(interrupted.get('task-count').textContent, 'Unavailable', 'an initial team outage does not show the legacy task count');
+  assert.ok(!interrupted.get('tasks').textContent.includes(legacyTitle));
+  teamUnavailable = false;
+  await poll(interrupted);
+  assertBoard(interrupted);
+  await interrupted.get('sign-out').click(); await idle(interrupted);
+
+  const restored = browser(input, request, { pathname: '/',
+    sessionStorage: new Map([['agentmesh:session', JSON.stringify({ key: tokens.a, mode: 'agent' })]]) });
+  await idle(restored);
+  assertBoard(restored);
+  assert.deepEqual(JSON.parse(restored.sessionStorage.get('agentmesh:session')), { key: tokens.a, mode: 'agent' });
+  assert.ok(restored.calls.filter(call => call.url.startsWith('/api/')).every(call => call.url === '/api/state' || call.url.startsWith('/api/legacy/transcript?')), 'restoring an agent session retains its existing read routes');
+  await restored.get('sign-out').click(); await idle(restored);
+
+  const member = browser(input, request, { pathname: '/', hash: '#k=' + encodeURIComponent(tokens.a) });
+  await idle(member);
+  assert.equal(member.get('task-count').textContent, '38 of 55 done', 'root fragment member access shows the same complete board');
+  assert.equal(member.get('tasks').querySelectorAll('.task-card').length, 55);
+  assert.ok(member.get('tasks').textContent.includes(newestTitle));
+  await member.get('sign-out').click(); await idle(member);
+
+  for (const [key, label, action, expected] of [
+    ['T55', 'Take it', 'take', 'assigned'], ['T55', 'Start', 'start', 'in_progress'],
+    ['T55', 'Mark done', 'done', 'done'], ['T39', 'Release', 'release', 'open'],
+    ['T41', 'Accept', 'accept', 'assigned'], ['T43', 'Decline', 'decline', 'open'],
+  ]) {
+    const writes = await click(app, findButton(card(key), label));
+    assert.deepEqual(postFrom(writes, '/api/task'), { action, key });
+    assert.ok(!writes.some(call => call.url.startsWith('/v1/') && call.options.method === 'POST'), 'team task actions never mutate legacy tasks');
+    assert.equal((await api('/api/state')).tasks.find(task => task.key === key).status, expected);
+  }
+  assertBoard(app, '39 of 55 done');
+  assert.ok(actions('T54').includes('task-start'), 'finishing a team dependency refreshes the dependent card');
+  const toggle = app.get('auto-respond'); toggle.checked = false;
+  const before = app.calls.length; await toggle.fire('change'); await idle(app);
+  assert.deepEqual(postFrom(app.calls.slice(before), '/v1/settings'), { auto_respond: false }, 'other legacy controls still work');
+  assertBoard(app, '39 of 55 done');
+
+  app.stateTransform = state => { state.members.find(member => member.id === state.me.id).name = 'Renamed team member'; };
+  await poll(app);
+  assert.ok(card('T40').textContent.includes('Renamed team member'), 'member renames refresh task assignees without a task mutation');
+  assert.ok(actions('T40').includes('task-done'), 'task permissions use member IDs rather than display names');
+  app.stateTransform = state => { state.tasks = []; };
+  await poll(app);
+  assert.equal(app.get('task-count').textContent, '0 of 0 done', 'a refreshed empty team does not resurrect legacy tasks');
+  assert.equal(app.get('tasks').querySelectorAll('.task-card').length, 0);
+  app.stateTransform = null;
+  await poll(app);
+  assertBoard(app, '39 of 55 done');
+  await app.get('sign-out').click(); await idle(app);
 }
 
 async function runSessions(input, request, tokens, html) {
