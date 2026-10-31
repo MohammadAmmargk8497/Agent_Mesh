@@ -9,6 +9,7 @@ from importlib.resources import files
 import pytest
 
 from agentmesh_server.config import init_config
+from agentmesh_server.dashboard_features import compose_dashboard
 from agentmesh_server.state import now_ms
 from test_hub_seed import running_hub
 
@@ -28,7 +29,7 @@ def test_same_dashboard_at_team_root_and_dashboard_root(unified_api):
         result = api.get(path, None)
         assert result.status == 200
         nonce = re.search(r"script-src 'nonce-([^']+)'", result.headers["content-security-policy"])[1]
-        template = files("agentmesh_server").joinpath("dashboard.html").read_text(encoding="utf-8")
+        template = compose_dashboard(files("agentmesh_server").joinpath("dashboard.html").read_text(encoding="utf-8"))
         text = result.body.decode()
         assert text == template.replace("__AGENTMESH_NONCE__", nonce)
         assert not re.search("openhuddle", text, re.I)

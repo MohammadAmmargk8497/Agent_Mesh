@@ -1,4 +1,4 @@
-// Provenance: OpenHuddle 59105e5 src/hub/tasks.js, MIT; verbatim
+// Provenance: OpenHuddle 59105e5 src/hub/tasks.js, MIT; adapted: reserve task keys with permanent AgentMesh handoff history
 import { LIMITS } from '../shared/protocol.js';
 import { badRequest, conflict, notFound } from './errors.js';
 import { cleanText, parse } from './text.js';
@@ -117,6 +117,8 @@ export function plan(hub, member, { tasks: inputs, replace = false }) {
     throw conflict('too_many_tasks', `A team can have at most ${LIMITS.tasks_per_team} tasks on its board.`);
   }
   const used = new Set(existing.keys());
+  // An archived handoff still identifies its original task after a plan is replaced.
+  for (const row of hub.all('SELECT DISTINCT task_key FROM task_handoffs WHERE team_id = ?', teamId)) used.add(row.task_key);
   let n = team.next_task;
   const local = new Map();
   const finals = inputs.map((input, i) => {

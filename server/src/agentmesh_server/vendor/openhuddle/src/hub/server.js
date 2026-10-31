@@ -1,4 +1,4 @@
-// Provenance: OpenHuddle 59105e5 src/hub/server.js, MIT; verbatim
+// Provenance: OpenHuddle 59105e5 src/hub/server.js, MIT; adapted: AgentMesh home-server handoff and note routes
 import http from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { extname, join } from 'node:path';
@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { openDb } from './db.js';
 import { Hub } from './hub.js';
 import { HubError } from './errors.js';
+import * as teamNotes from './team-notes.js';
 import { LIMITS, VERSION, ASK_WAIT_MAX_S, DEFAULT_HUB } from '../shared/protocol.js';
 
 const PAGES_DIR = fileURLToPath(new URL('./pages/', import.meta.url));
@@ -266,7 +267,17 @@ export async function startHub({
     if (!memberLimiter.take(member.id)) throw new HubError(429, 'rate_limited', 'Slow down: too many requests.');
 
     if (method === 'GET') {
-      if (path === '/api/state') return sendJson(res, 200, hub.state(member));
+      if (path === '/api/state') {
+        const state = hub.state(member);
+        const creators = new Map(hub.all('SELECT key, created_by FROM tasks WHERE team_id = ?', member.team_id)
+          .map((task) => [task.key, task.created_by]));
+        state.tasks = state.tasks.map((task) => ({ ...task, created_by: creators.get(task.key) ?? null }));
+        return sendJson(res, 200, state);
+      }
+      if (path === '/api/handoffs') return sendJson(res, 200, teamNotes.listHandoffs(hub, member, url.searchParams.get('task_key')));
+      if (path === '/api/notes') return sendJson(res, 200, teamNotes.listNotes(hub, member, {
+        q: url.searchParams.get('q'), tag: url.searchParams.get('tag'),
+      }));
       if (path === '/api/events') {
         const q = url.searchParams;
         return sendJson(
@@ -288,9 +299,16 @@ export async function startHub({
       throw new HubError(404, 'not_found', `No route GET ${path}.`);
     }
 
-    if (method !== 'POST') throw new HubError(405, 'method_not_allowed', 'Use GET or POST.');
+    if (method === 'DELETE' && path.startsWith('/api/notes/')) {
+      return sendJson(res, 200, hub.tx(() => teamNotes.deleteNote(hub, member, path.slice('/api/notes/'.length))));
+    }
+    if (method !== 'POST') throw new HubError(405, 'method_not_allowed', 'Use GET, POST, or DELETE for a note.');
     const body = await readBody(req);
     switch (path) {
+      case '/api/handoff':
+        return sendJson(res, 200, hub.tx(() => teamNotes.createHandoff(hub, member, body)));
+      case '/api/notes':
+        return sendJson(res, 200, hub.tx(() => teamNotes.createNote(hub, member, body)));
       case '/api/heartbeat':
         return sendJson(res, 200, hub.heartbeat(member, body.status));
       case '/api/post':

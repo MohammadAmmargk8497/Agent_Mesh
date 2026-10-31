@@ -24,7 +24,9 @@ def test_signin_package_matches_worker_byte_for_byte():
 def test_public_pages_fresh_nonce_csp_and_no_inline_tokens(api, page, paths):
     from importlib.resources import files
 
-    template = files("agentmesh_server").joinpath(page).read_text(encoding="utf-8")
+    from agentmesh_server.dashboard_features import compose_dashboard
+
+    template = compose_dashboard(files("agentmesh_server").joinpath(page).read_text(encoding="utf-8"))
     nonces = []
     for path in paths:
         result = api.get(path, None)
