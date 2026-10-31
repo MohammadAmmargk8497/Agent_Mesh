@@ -78,8 +78,10 @@
     .invite input{width:100%;margin-top:10px}
     .agent-a{--agent-accent:var(--cyan);--agent-ink:var(--cyan-ink);color:var(--agent-ink)}
     .agent-b{--agent-accent:var(--orange);--agent-ink:var(--orange-ink);color:var(--agent-ink)}
-    .workspace{display:grid;grid-template-columns:260px minmax(0,1fr) 300px;gap:18px;align-items:start}
-    .col{display:grid;gap:18px;min-width:0}
+    .workspace{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px;align-items:start}
+    /* Keep the session/section wrappers, but let their panels share the grid. */
+    .col{display:contents}
+    .panel-team,.panel-feed{order:-1}
     .panel{display:flex;flex-direction:column;min-height:0;min-width:0;background:linear-gradient(145deg,var(--glow),transparent 12rem),var(--panel);border:1px solid var(--line-soft);border-radius:var(--radius);box-shadow:var(--elevation);overflow:hidden}
     .panel-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:18px 20px;border-bottom:1px solid var(--line-soft);background:linear-gradient(100deg,var(--glow),transparent)}
     h2{font:650 20px/1.3 var(--sans);letter-spacing:-.025em;margin:0;text-wrap:balance}
@@ -96,8 +98,7 @@
     .items{overflow:auto;padding:0 18px;overscroll-behavior:contain}
     .items,.messages,.col-feed,.board-column,#master .sections{scrollbar-width:thin;scrollbar-color:var(--line) transparent}
     .col-team .items{max-height:380px}
-    .col-feed{position:sticky;top:18px;max-height:calc(100dvh - 36px);overflow:auto;overscroll-behavior:contain;grid-auto-rows:max-content}
-    .panel-feed .items{max-height:calc(100dvh - 240px);min-height:180px}
+    .panel-feed .items{max-height:400px;min-height:180px}
     .panel-patches .items,.panel-audit .items{max-height:280px}
     .item{border-bottom:1px solid var(--line-soft);padding:14px 0;overflow-wrap:anywhere}
     .item:last-child{border-bottom:0}
@@ -123,7 +124,7 @@
     .rule:last-child{border:0}
     .rule dt{font:11px var(--sans);color:var(--dim);margin-bottom:4px}
     .rule dd{margin:0;font-size:12px;overflow-wrap:anywhere}
-    .panel-board{container-type:inline-size}
+    .panel-board{container-type:inline-size;grid-column:1/-1;order:-2}
     .board{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;padding:16px 18px 18px;align-items:start}
     .board-column{--column-accent:var(--blue);--column-progress:25%;display:flex;flex-direction:column;background:var(--panel-2);border:1px solid var(--line-soft);border-radius:12px;padding:0 8px 8px;min-width:0;max-height:min(640px,72dvh);overflow-y:auto;overscroll-behavior:contain}
     .column-heading{position:sticky;top:0;z-index:1;display:flex;justify-content:space-between;align-items:center;gap:6px;margin:0 0 10px;padding:14px 4px 16px;background:var(--panel-2);font-size:12px;font-weight:650;color:var(--text)}
@@ -227,23 +228,21 @@
     dialog dd{margin:0}
     kbd{border:1px solid var(--line);border-radius:4px;background:var(--panel-2);padding:2px 6px;font-size:12px}
     .filter-hint{padding:0 18px}
-    .dashboard-layout{display:grid;grid-template-columns:190px minmax(0,1fr);gap:16px;align-items:start}
+    .dashboard-layout{display:grid;grid-template-columns:minmax(0,1fr);gap:16px;align-items:start}
     .dashboard-content{min-width:0}
-    .section-nav{position:sticky;top:18px;max-height:calc(100dvh - 36px);overflow:auto;padding:12px;gap:14px}
-    .nav-group{min-width:0}
-    .nav-heading{display:flex;justify-content:space-between;align-items:center;gap:6px;font-size:11px;text-transform:uppercase;letter-spacing:.04em;margin:0 0 6px;color:var(--muted)}
+    .section-nav{position:sticky;top:12px;z-index:10;display:flex;flex-direction:row;align-items:flex-start;max-width:100%;overflow-x:auto;padding:12px;gap:14px}
+    .nav-group{display:flex;flex-wrap:wrap;align-content:flex-start;gap:4px;flex:1 0 300px;min-width:0}
+    .nav-heading{display:flex;justify-content:space-between;align-items:center;gap:6px;flex-basis:100%;font-size:11px;text-transform:uppercase;letter-spacing:.04em;margin:0 0 6px;color:var(--muted)}
     .section-link{display:flex;justify-content:space-between;align-items:center;gap:6px;border-radius:6px;padding:7px 6px;color:var(--text);text-decoration:none;font-size:12px;overflow-wrap:anywhere}
     .section-link:hover{background:var(--hover)}
-    .section-link[aria-current="page"]{background:linear-gradient(100deg,var(--glow),transparent),var(--panel);color:var(--cyan-ink);box-shadow:inset 3px 0 var(--cyan),0 2px 8px var(--line-soft);font-weight:650}
-    .nav-count{font-size:10px;max-width:55%;white-space:normal;text-align:right;flex-shrink:0}
+    .section-link[aria-current="page"]{background:linear-gradient(100deg,var(--glow),transparent),var(--panel);color:var(--cyan-ink);box-shadow:inset 0 -3px var(--cyan),0 2px 8px var(--line-soft);font-weight:650}
+    .nav-count{font-size:10px;white-space:nowrap;text-align:right;flex-shrink:0}
     .section-total{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 18px;border-bottom:1px solid var(--line-soft)}
     .panel-handoffs,.panel-notes-unavailable{margin:0}
+    .dashboard-content [data-section],.dashboard-content [data-focus]{scroll-margin-top:200px}
     .dashboard-content .panel[data-section-active="true"]{border-color:var(--cyan)}
     @media(max-width:760px){
-      .dashboard-layout{grid-template-columns:1fr}
-      .section-nav{position:static;max-height:none;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
       .dashboard-content [data-section][data-section-active="false"]{display:none!important}
-      .dashboard-content .col-feed{max-height:none;overflow:visible}
     }
     @keyframes activity-ripple{0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--cyan) 35%,transparent)}100%{box-shadow:0 0 0 10px transparent}}
     @keyframes task-arrival{from{transform:translateX(-12px);background:color-mix(in srgb,var(--cyan) 22%,var(--panel))}to{transform:translateX(0);background:var(--panel)}}
@@ -262,23 +261,12 @@
       .timeline-entry{flex-basis:230px}
       .legend{flex-wrap:wrap}
     }
-    @container(max-width:860px){.board{grid-template-columns:repeat(2,minmax(0,1fr))}}
-    @container(max-width:460px){.board{grid-template-columns:1fr}}
-    @media(max-width:1280px){
-      .workspace{grid-template-columns:280px minmax(0,1fr)}
-      .col-feed{position:static;max-height:none;overflow:visible;grid-column:1/-1;grid-template-columns:repeat(2,minmax(0,1fr))}
-      .panel-feed{grid-column:1/-1}
-      .panel-feed .items{max-height:400px}
-    }
+    @container(max-width:1200px){.board{grid-template-columns:repeat(2,minmax(0,1fr))}}
+    @container(max-width:620px){.board{grid-template-columns:1fr}}
     @media(max-width:900px){.sections{grid-template-columns:1fr}}
     @media(max-width:760px){
       .shell{padding:16px}
       .workspace{grid-template-columns:1fr;gap:16px}
-      .col{display:contents}
-      .panel-team{order:1}.panel-board{order:2}.panel-huddles{order:3}.panel-questions{order:4}
-      .panel-feed{order:5}.panel-prompt{order:6}.panel-messages{order:7}.panel-claims{order:8}
-      .panel-rules{order:9}.panel-patches{order:10}.panel-audit{order:11}
-      .panel-feed{grid-column:auto}
       .messages{max-height:60dvh;padding:14px}
       .message{max-width:94%;min-width:0;flex-shrink:0}
       .subtitle{font-size:12px}
@@ -349,12 +337,12 @@
     .m-top .badge{font-size:10px}
     .section-nav{background:var(--glass);padding:14px 10px;gap:20px}
     .nav-heading{padding:0 6px;font-size:10px;font-weight:700;letter-spacing:.1em}
-    .section-link{position:relative;justify-content:flex-start;flex-wrap:wrap;gap:8px;padding:9px 8px;line-height:1.45;margin:2px 0;border:1px solid transparent;border-radius:8px}
+    .section-link{position:relative;justify-content:flex-start;flex-wrap:nowrap;gap:8px;min-height:44px;padding:9px 8px;line-height:1.45;margin:2px 0;border:1px solid transparent;border-radius:8px}
     .section-link::before{content:"";width:9px;height:9px;border:1.5px solid currentColor;border-radius:3px;flex-shrink:0;opacity:.6}
     .section-link[data-section="timeline"]::before,.section-link[data-section="activity"]::before{border-radius:50%;border-width:2px;border-left-color:transparent}
     .section-link[data-section="transcript"]::before,.section-link[data-section="huddles"]::before{border-radius:4px 4px 4px 0}
     .section-link[data-section="members"]::before{border-radius:50%;box-shadow:3px 3px 0 -1px var(--panel-2)}
-    .section-link>span:first-child{min-width:0;flex:1 1 80px;overflow-wrap:normal}
+    .section-link>span:first-child{min-width:0;white-space:nowrap;overflow-wrap:normal}
     .nav-count{margin-left:auto;max-width:100%;font-size:10px;padding:1px 6px}
     .section-link[aria-current="page"]{border-color:color-mix(in srgb,var(--cyan) 20%,var(--line-soft))}
     .section-link[aria-current="page"]::before{opacity:1;background:var(--glow)}
@@ -409,7 +397,6 @@
       .brand-mark{width:48px;height:48px;padding:8px;border-radius:14px}
       .section-nav{gap:14px;padding:12px}
       .section-link{padding:8px 6px}
-      .nav-count{max-width:45%}
     }
     @media(max-width:480px){
       .masthead{padding:20px 16px;border-radius:16px}
@@ -419,9 +406,6 @@
       .dashboard-tools{padding:14px}
       .panel-heading{gap:8px}
       .board{padding:14px;gap:12px}
-      .section-link{flex-wrap:wrap}
-      .section-link>span:first-child{flex:1 1 60px}
-      .nav-count{max-width:100%;margin-left:17px}
       .connection{padding:0}
       .heartbeat{font-size:10px}
     }
@@ -486,7 +470,6 @@
         <button id="export-transcript" type="button">Export transcript .md</button>
         <button id="export-board" type="button">Export board .md</button>
       </div>
-      <div><div class="panel-label">Working now</div><div id="working-list" class="working-list"></div></div>
     </section>
     <dialog id="shortcuts" aria-labelledby="shortcuts-title">
       <h2 id="shortcuts-title">Keyboard shortcuts</h2>
@@ -510,6 +493,7 @@
         <section id="members-panel" class="panel panel-team" aria-labelledby="team-title">
           <div class="panel-heading"><h2 id="team-title">Team status</h2><span id="team-count" class="count">2 agents</span></div>
           <ul id="members" class="members"></ul>
+          <div class="invite"><div class="panel-label">Working now</div><div id="working-list" class="working-list"></div></div>
           <div id="team-invite" class="invite" hidden>
             <button id="invite-show" type="button">Show join link</button>
             <div id="invite-box" hidden><label for="invite-url" class="hint">Team join link</label><input id="invite-url" type="text" readonly><button id="invite-copy" type="button">Copy</button><p id="invite-exp" class="hint"></p></div>
