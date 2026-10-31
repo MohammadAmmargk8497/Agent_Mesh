@@ -121,27 +121,42 @@ def main():
         with local_server(directory, config) as api:
             state = response_json(api.get("/api/state", "b"), "member state")
             team = state["team"]["id"]
-            response_json(api.post("/api/plan", {"tasks": [{"key": "LOCAL", "title": "Local handoff task"}]}, "b"), "plan")
+            tasks = [{"key": f"T{index}", "title": f"Team task {index}",
+                      **({"assignee": "agent-b"} if index == 41 else {})}
+                     for index in range(1, 56)]
+            response_json(api.post("/api/plan", {"tasks": tasks}, "b"), "plan")
+            for index in range(1, 40):
+                response_json(api.post("/api/task", {"action": "start", "key": f"T{index}"}, "b"), "start team task")
+                if index <= 38:
+                    response_json(api.post("/api/task", {"action": "done", "key": f"T{index}"}, "b"), "finish team task")
+            for key in ("T40", "T55"):
+                response_json(api.post("/api/task", {"action": "take", "key": key}, "b"), "assign team task")
+            # Distinct legacy rows must never replace the team's full board.
+            for _ in range(11):
+                api.task(role="b")
+            assert len(response_json(api.get("/v1/dashboard/state", "b"), "legacy state")["tasks"]) == 11
+            assert api.post("/v1/messages", {"to": "agent-a", "text": "One-page transcript remains visible"}, "b").status == 201
             note = response_json(api.post("/api/notes", {"title": title, "body": body, "tags": ["e2e", "home"]}, "b"), "create note")["note"]
             other = response_json(api.post("/api/notes", {"title": "Different note", "body": "Other body", "tags": ["other"]}, "b"), "create second note")["note"]
-            handoff = response_json(api.post("/api/handoff", {"task_key": "LOCAL", "summary": summary,
+            handoff = response_json(api.post("/api/handoff", {"task_key": "T55", "summary": summary,
                 "changed_files": ["server/tests/team_features_e2e.py"], "open_questions": ["Review next release?"],
                 "next_step": "Verify in the browser"}, "b"), "create handoff")["handoff"]
-            assert response_json(api.get("/api/handoffs?task_key=LOCAL", "b"), "read handoff")["handoffs"] == [handoff]
+            assert response_json(api.get("/api/handoffs?task_key=T55", "b"), "read handoff")["handoffs"] == [handoff]
             assert {row["id"] for row in response_json(api.get("/api/notes", "b"), "read notes")["notes"]} == {note["id"], other["id"]}
         # A new Python front door and new Node hub use only the same local SQLite files.
         with local_server(directory, config) as api:
             assert response_json(api.get("/api/state", "b"), "restarted state")["team"]["id"] == team
-            assert response_json(api.get("/api/handoffs?task_key=LOCAL", "b"), "restarted handoff")["handoffs"] == [handoff]
+            assert response_json(api.get("/api/handoffs?task_key=T55", "b"), "restarted handoff")["handoffs"] == [handoff]
             assert note in response_json(api.get("/api/notes", "b"), "restarted notes")["notes"]
-            html = api.get("/t/" + team, None)
+            html = api.get("/", None)
             assert html.status == 200
             assert all(value.encode() not in html.body for value in config.values()), "Credential embedded in HTML"
-            browser_check(api, root, chrome_tmp, {"teamId": team, "taskKey": "LOCAL", "noteId": note["id"],
-                "handoffId": handoff["id"], "title": title, "body": body, "summary": summary})
+            browser_check(api, root, chrome_tmp, {"teamId": team, "taskKey": "T55", "noteId": note["id"],
+                "handoffId": handoff["id"], "title": title, "body": body, "summary": summary,
+                "tasks": response_json(api.get("/api/state", "b"), "full team board")["tasks"], "doneCount": 38})
             notes = response_json(api.get("/api/notes", "b"), "notes after browser actions")["notes"]
             assert {row["id"] for row in notes} == {note["id"], other["id"]}
-            handoffs = response_json(api.get("/api/handoffs?task_key=LOCAL", "b"), "handoffs after browser actions")["handoffs"]
+            handoffs = response_json(api.get("/api/handoffs?task_key=T55", "b"), "handoffs after browser actions")["handoffs"]
             assert len(handoffs) == 2 and handoffs[0]["summary"] == "Browser-created handoff"
         print("Local home-server E2E passed: member APIs, full restart, real-page rendering, filters and explicit deletion")
 
