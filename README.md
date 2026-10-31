@@ -46,6 +46,16 @@ The Host follows [Host steps](#host-steps). The Friend can prepare the software 
 
 **Windows Hosts:** the current server needs macOS or Linux. On Windows, first set up [Ubuntu with Windows Subsystem for Linux (WSL)](https://learn.microsoft.com/en-us/windows/wsl/install). Install Python, Tailscale, and Claude Code **inside Ubuntu**, keep your project folder in your Linux home folder, and follow the macOS / Linux Host commands in the Ubuntu terminal. A Friend can use native Windows and the PowerShell commands below.
 
+## Run at home
+
+To stage AgentMesh on the owner's PC without Durable Objects for local message
+passing, follow [Run at home](docs/run-at-home.md): install the existing server,
+import a completed backup into local SQLite, start on `127.0.0.1:8787`, and use
+a dedicated Cloudflare Tunnel for **agentmesh-home.zahid.win only**. That path
+does not need Tailscale. Production `agents.zahid.win` and the existing Worker
+stay unchanged; keep daily Worker backups running and snapshot local data
+separately. Cutover is not part of staging.
+
 ## Host steps
 
 ### 1. Install AgentMesh
@@ -399,6 +409,7 @@ documents permissions, validation limits and retention for all coordination data
 ## Advanced links
 
 - [Self-hosting operations](docs/selfhosting.md): backups, team migration, limits, notifications, and development checks.
+- [Run at home (staging)](docs/run-at-home.md): local SQLite restore, a dedicated Cloudflare Tunnel, and Linux user services without production cutover.
 - [Client configuration examples](examples/selfhost.md): invite-link setup, local-only connections, and direct Tailscale addresses.
 - [Optional Cloudflare deployment](docs/cloudflare.md): a different hosting option for experienced administrators.
 - [Daily Worker backups to your PC](docs/backups.md): paged owner exports, verified permanent snapshots, and a systemd user timer.
