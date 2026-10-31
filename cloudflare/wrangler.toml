@@ -4,10 +4,7 @@ compatibility_date = "2026-10-01"
 compatibility_flags = ["nodejs_compat"]
 workers_dev = false   # only reachable on your custom domain (where Cloudflare Access can protect it)
 
-routes = [
-  { pattern = "agents.zahid.win", custom_domain = true },
-  { pattern = "agentmesh.zahid.win", custom_domain = true }
-]
+# Hostnames now point at the home server through the agentmesh-home tunnel.
 
 # 120 requests / 60s per agent (or per IP for unauthenticated callers).
 [[ratelimits]]
