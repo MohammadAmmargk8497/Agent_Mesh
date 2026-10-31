@@ -16,7 +16,7 @@ agentmesh-server = "agentmesh_server.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-agentmesh_server = ["dashboard.html", "signin.html", "hub_dashboard.html", "hub_join.html", "vendor/openhuddle/**/*"]
+agentmesh_server = ["dashboard.html", "dashboard_features.js", "signin.html", "hub_dashboard.html", "hub_join.html", "vendor/openhuddle/**/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -20,6 +20,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from . import coordination
 from .config import load_config
+from .dashboard_features import compose_dashboard
 from .hub import HubSupervisor, HubUnavailable
 from .state import AGENTS, MAX_WAIT_S, MAX_WAITERS_PER_AGENT, State, now_ms
 from .transcript import hub_messages, merge_messages
@@ -266,8 +267,10 @@ class Handler(BaseHTTPRequestHandler):
 
     def _dashboard(self, name="dashboard.html"):
         nonce = base64.b64encode(secrets.token_bytes(16)).decode("ascii")
-        html = files("agentmesh_server").joinpath(name).read_bytes()
-        html = html.replace(b"__AGENTMESH_NONCE__", nonce.encode("ascii"))
+        html = files("agentmesh_server").joinpath(name).read_text(encoding="utf-8")
+        if name == "dashboard.html":
+            html = compose_dashboard(html)
+        html = html.replace("__AGENTMESH_NONCE__", nonce).encode("utf-8")
         csp = (f"default-src 'none'; script-src 'nonce-{nonce}'; "
                f"style-src 'nonce-{nonce}' https://fonts.googleapis.com; "
                "font-src https://fonts.gstatic.com; connect-src 'self'; "
@@ -285,6 +288,8 @@ class Handler(BaseHTTPRequestHandler):
             raise HttpError(404, "not found")
         nonce = base64.b64encode(secrets.token_bytes(16)).decode("ascii")
         page = files("agentmesh_server").joinpath(name).read_text(encoding="utf-8")
+        if name == "dashboard.html":
+            page = compose_dashboard(page)
         for key, value in (("HUB_URL", hub.public_url), ("INVITE_URL", hub.public_url + path)):
             page = page.replace("{{" + key + "}}", html.escape(value, quote=True))
         page = page.replace("__AGENTMESH_NONCE__", nonce)

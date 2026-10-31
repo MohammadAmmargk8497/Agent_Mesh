@@ -1,4 +1,4 @@
-// Provenance: OpenHuddle 59105e5 src/hub/db.js, MIT; verbatim
+// Provenance: OpenHuddle 59105e5 src/hub/db.js, MIT; adapted: additive AgentMesh handoff and team-note tables
 // node:sqlite still prints an ExperimentalWarning on some Node versions; keep the hub log clean.
 const emitWarning = process.emitWarning;
 process.emitWarning = function (warning, ...rest) {
@@ -145,7 +145,32 @@ CREATE TABLE IF NOT EXISTS huddle_votes (
 
 // Schema changes are appended here, never edited: entry N upgrades a database from N-1 to N.
 // Version 1 is the 0.1.0 schema; databases from 0.1.0 carry no stamp (0) and upgrade in place.
-const MIGRATIONS = [null, SCHEMA, huddles];
+const TEAM_NOTES_TABLES = `
+CREATE TABLE IF NOT EXISTS task_handoffs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  team_id TEXT NOT NULL,
+  task_key TEXT NOT NULL,
+  author_id TEXT NOT NULL,
+  summary TEXT NOT NULL,
+  changed_files TEXT NOT NULL,
+  open_questions TEXT NOT NULL,
+  next_step TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS task_handoffs_team_task ON task_handoffs(team_id, task_key, created_at DESC, id DESC);
+CREATE TABLE IF NOT EXISTS team_notes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  team_id TEXT NOT NULL,
+  author_id TEXT NOT NULL,
+  title TEXT NOT NULL,
+  body TEXT NOT NULL,
+  tags TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS team_notes_team ON team_notes(team_id, created_at DESC, id DESC);
+`;
+
+const MIGRATIONS = [null, SCHEMA, huddles, TEAM_NOTES_TABLES];
 export const SCHEMA_VERSION = MIGRATIONS.length - 1;
 
 export function openDb(path = ':memory:') {

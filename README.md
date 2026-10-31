@@ -222,6 +222,12 @@ For newly created or joined memberships, `agentmesh dash` opens the personal tea
 
 Team creation, joining, member removal, leaving and team deletion use the CLI/API, not dashboard management controls. Upstream has no multi-team dashboard or team switcher; this port does not invent them. Each project uses its own trusted local team configuration.
 
+The **Python home server only** also provides task-card handoffs (creator/assignee
+writes, whole-team reads) and a shared **Notes** panel with search and tag filter.
+History is never automatically pruned; only an explicit author-confirmed note
+deletion removes a note row. Open a personal team link for member access. See
+[team notes and handoff APIs](docs/team-notes.md); the Worker is unchanged.
+
 The former viewer identity and `VIEWER_TOKEN` no longer authenticate, and `/v1/transcript` is unavailable. Seeded legacy tokens lack upstream's `vc_` prefix: `agentmesh dash` cannot produce their personal link, and upstream's token scrubber does not recognize them. Keep these credentials private and enter the legacy agent token at `/`, or use `/t/<team-id>#k=<member-key>` for member access, including a seeded member key.
 
 ## Coordination features

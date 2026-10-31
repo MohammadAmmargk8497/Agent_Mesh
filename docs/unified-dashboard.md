@@ -43,6 +43,36 @@ The unchanged hub authenticates requests as activity, so viewing a dashboard
 refreshes that member's presence. Chips describe membership presence, not a
 separate agent-process connection.
 
+## Home-server handoffs and notes
+
+The Python home server additionally shows **Handoffs** on each team task card and
+a **Notes** panel in member access. These extensions are not available on the
+Worker or in legacy agent access. For seeded credentials that default to legacy
+access at `/`, use the personal `/t/<team-id>#k=<member-key>` link to open member
+access. No token is embedded in a served page.
+
+Task creators and current assignees can save a summary, changed files, open
+questions and next step on the card. Any team member can read all handoffs,
+newest first. The Notes panel supports creating a title/body with up to ten
+comma-separated tags, case-insensitive text search, and an exact tag filter;
+search and tag filters combine. Only a note's author sees its delete action.
+Deleting requires **Delete note**, then **Confirm delete**; cancellation changes
+nothing. Confirmation sends a real `DELETE`, removing the row, not hiding it.
+
+Both features use local `hub.db` and survive a server restart. Handoffs and notes
+are never automatically pruned, including after task replacement or member
+removal. An author-requested note deletion is the explicit exception; its feed
+history remains. Structured task handoffs are also recorded in the feed. See
+[the API and storage contract](team-notes.md).
+
+The shared static dashboard templates remain byte-identical across hosts. The
+Python boundary composes these server-only controls into the served template
+inside the existing member session. A changed insertion point fails explicitly
+rather than silently dropping controls. All teammate text uses text nodes;
+sign-out clears notes, handoffs, drafts and confirmation state and aborts reads.
+Idle polls reuse cached knowledge while the team's event cursor is unchanged;
+changing only the note filters reloads notes, not handoff history.
+
 ## Legacy compatibility and isolation
 
 Live transcript, Message activity and Patches remain on the same page. Member

@@ -34,7 +34,7 @@ The generated dashboard pages in `server/src/agentmesh_server/` and `cloudflare/
 - `server/src/agentmesh_server/vendor/openhuddle/src/client/wire.js` — verbatim wire-format helpers.
 - `server/src/agentmesh_server/vendor/openhuddle/src/hub/asks.js` — adapted: AgentMesh permanent history retention (no automatic age/count/capacity pruning); ask ids never reuse an existing id, so a restored team counter that lags behind merged asks cannot cause a failure.
 - `server/src/agentmesh_server/vendor/openhuddle/src/hub/claims.js` — verbatim hub feature module.
-- `server/src/agentmesh_server/vendor/openhuddle/src/hub/db.js` — verbatim hub database helper.
+- `server/src/agentmesh_server/vendor/openhuddle/src/hub/db.js` — adapted: additive schema v3 migration creates task handoff and shared-note tables/indexes without altering existing tables or migrations.
 - `server/src/agentmesh_server/vendor/openhuddle/src/hub/errors.js` — verbatim hub error helpers.
 - `server/src/agentmesh_server/vendor/openhuddle/src/hub/hub.js` — adapted: AgentMesh permanent history retention (events, asks and inactive teams are never swept).
 - `server/src/agentmesh_server/vendor/openhuddle/src/hub/huddles.js` — adapted: AgentMesh permanent history retention (no automatic age/count/capacity pruning).
@@ -49,8 +49,9 @@ The generated dashboard pages in `server/src/agentmesh_server/` and `cloudflare/
 - `server/src/agentmesh_server/vendor/openhuddle/src/hub/pages/site.css` — verbatim dashboard asset.
 - `server/src/agentmesh_server/vendor/openhuddle/src/hub/pages/site.js` — verbatim dashboard asset.
 - `server/src/agentmesh_server/vendor/openhuddle/src/hub/prompt.js` — adapted: AgentMesh permanent history retention (no automatic age/count/capacity pruning).
-- `server/src/agentmesh_server/vendor/openhuddle/src/hub/server.js` — verbatim hub server.
-- `server/src/agentmesh_server/vendor/openhuddle/src/hub/tasks.js` — verbatim hub feature module.
+- `server/src/agentmesh_server/vendor/openhuddle/src/hub/server.js` — adapted: home-server-only handoff/note routes using existing member authentication, team scoping and transactions; task snapshots expose their existing creator id for dashboard permissions.
+- `server/src/agentmesh_server/vendor/openhuddle/src/hub/team-notes.js` — original AgentMesh home-server feature module: immutable handoffs, shared notes/search, explicit author-only hard deletion and feed events; no automatic pruning.
+- `server/src/agentmesh_server/vendor/openhuddle/src/hub/tasks.js` — adapted: home-server task allocation reserves keys with permanent handoff history, so plan replacement cannot attach old handoffs to a new task with the same key.
 - `server/src/agentmesh_server/vendor/openhuddle/src/hub/text.js` — verbatim hub feature module.
 - `server/src/agentmesh_server/vendor/openhuddle/src/shared/glob.js` — verbatim shared helper.
 - `server/src/agentmesh_server/vendor/openhuddle/src/shared/ids.js` — verbatim shared helper.
@@ -134,12 +135,16 @@ The vendored hub layout and domain logic are preserved in their source assets. T
 
 The byte-identical unified dashboards render message text and metadata with `textContent`, retain the existing layout/theme, and do not embed credentials. Hub-backed agent-control snapshots advertise `team_transcript`; those dashboard sessions separately authorize the same transcript through member GET routes without widening agent `/v1` reads. Standalone legacy servers keep their existing snapshots. The Python projection reads hub SQLite in a read-only transaction; the Worker uses internal Durable Object RPCs. Both boundaries resolve legacy ownership from the immutable seed ledger rather than authenticating as seeded agents, so generated-member reads do not fabricate those agents' presence. Neither projection sends, acknowledges or changes messages.
 
+**Home-server team knowledge** is an original server-only extension. Schema v3 adds `task_handoffs` and `team_notes` without modifying existing tables. Handoffs and notes are never automatically pruned, including when task plans are replaced or authors leave. Only an explicit authenticated author `DELETE /api/notes/<id>` physically deletes a note row; there are no soft-delete flags. Creation/deletion feed events remain permanent. The Worker and client copies are not updated. The shared dashboard templates and generated upstream assets remain byte-identical; `dashboard_features.py` composes the Python-served page with `dashboard_features.js` inside the existing member session. Checked insertion points preserve nonce CSP, bearer authorization, cancellation, sign-out cleanup and `textContent` rendering. The served home page adds task-card handoffs and a searchable Notes panel; the Worker page does not.
+
 Original AgentMesh integration (not copied from upstream):
 - `client/src/agentmesh_mcp/vendor/openhuddle/agentmesh-client-boot.js` — Python shim's Node entry point.
 - `client/src/agentmesh_mcp/vendor/openhuddle/src/client/agentmesh-boundary.js` — config.env loader, origin-scoped Access fetch wrapper and upstream saveConfig/findProject bootstrap, also reached by the adapted installed bin.
 - `cloudflare/src/openhuddle/do-sqlite.ts` — Durable Object SQL compatibility adapter.
 - `cloudflare/src/openhuddle/export.ts` — shared, read-only owner export paging over both Durable Object stores.
 - `server/src/agentmesh_server/transcript.py` — read-only hub message normalization and newest-500 legacy/hub merge for the Python boundary.
+- `server/src/agentmesh_server/dashboard_features.py` — checked server-only composition of the shared dashboard template at the Python HTTP boundary.
+- `server/src/agentmesh_server/dashboard_features.js` — original member-session task handoff and shared-note UI, including explicit two-step note deletion.
 
 The generated pages listed above derive from upstream `src/hub/pages/dashboard.html`, `dashboard.js`, `dashboard.css`, `base.css`, `join.html`, `site.css`, `site.js`, `favicon.svg` and `mascot.svg`. The unified AgentMesh `server/src/agentmesh_server/dashboard.html` and `cloudflare/src/dashboard.html` remain adapted derivatives of those dashboard sources, with authenticated agent `/v1` controls alongside copied member `/api` behavior; the former viewer identity and separate access-mode selector have been removed. See [unified-dashboard.md](unified-dashboard.md) for the integration boundaries.
 
