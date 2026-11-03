@@ -69,10 +69,8 @@
     .invite input{width:100%;margin-top:10px}
     .agent-a{color:var(--cyan)}
     .agent-b{color:var(--orange)}
-    .workspace{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px;align-items:start}
-    /* Keep the session/section wrappers, but let their panels share the grid. */
-    .col{display:contents}
-    .panel-team,.panel-feed{order:-1}
+    .workspace{display:grid;grid-template-columns:260px minmax(0,1fr) 300px;gap:18px;align-items:start}
+    .col{display:grid;gap:18px;min-width:0}
     .panel{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(--panel);border:1px solid var(--line-soft);border-radius:10px;box-shadow:0 1px 2px var(--line-soft);overflow:hidden}
     .panel-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:16px 20px;border-bottom:1px solid var(--line-soft)}
     h2{font:600 20px/1.3 var(--sans);margin:0}
@@ -89,7 +87,8 @@
     .items{overflow:auto;padding:0 18px;overscroll-behavior:contain}
     .items,.messages,.col-feed,.board-column,#master .sections{scrollbar-width:thin;scrollbar-color:var(--line) transparent}
     .col-team .items{max-height:380px}
-    .panel-feed .items{max-height:400px;min-height:180px}
+    .col-feed{position:sticky;top:18px;max-height:calc(100dvh - 36px);overflow:auto;overscroll-behavior:contain;grid-auto-rows:max-content}
+    .panel-feed .items{max-height:calc(100dvh - 240px);min-height:180px}
     .panel-patches .items,.panel-audit .items{max-height:280px}
     .item{border-bottom:1px solid var(--line-soft);padding:14px 0;overflow-wrap:anywhere}
     .item:last-child{border-bottom:0}
@@ -115,7 +114,7 @@
     .rule:last-child{border:0}
     .rule dt{font:11px var(--sans);color:var(--dim);margin-bottom:4px}
     .rule dd{margin:0;font-size:12px;overflow-wrap:anywhere}
-    .panel-board{container-type:inline-size;grid-column:1/-1;order:-2}
+    .panel-board{container-type:inline-size}
     .board{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;padding:16px 18px 18px;align-items:start}
     .board-column{display:flex;flex-direction:column;background:var(--panel-2);border-radius:8px;padding:0 8px 8px;min-width:0;max-height:min(640px,72dvh);overflow-y:auto;overscroll-behavior:contain}
     .column-heading{position:sticky;top:0;z-index:1;display:flex;justify-content:space-between;align-items:center;gap:6px;margin:0 0 4px;padding:10px 4px 8px;background:var(--panel-2);font-size:12px;font-weight:600;color:var(--muted)}
@@ -219,22 +218,6 @@
     dialog dd{margin:0}
     kbd{border:1px solid var(--line);border-radius:4px;background:var(--panel-2);padding:2px 6px;font-size:12px}
     .filter-hint{padding:0 18px}
-    .dashboard-layout{display:grid;grid-template-columns:minmax(0,1fr);gap:16px;align-items:start}
-    .dashboard-content{min-width:0}
-    .section-nav{position:sticky;top:12px;z-index:10;display:flex;flex-direction:row;align-items:flex-start;max-width:100%;overflow-x:auto;padding:12px;gap:14px}
-    .nav-group{display:flex;flex-wrap:wrap;align-content:flex-start;gap:4px;flex:1 0 300px;min-width:0}
-    .nav-heading{display:flex;justify-content:space-between;align-items:center;gap:6px;flex-basis:100%;font-size:11px;text-transform:uppercase;letter-spacing:.04em;margin:0 0 6px;color:var(--muted)}
-    .section-link{display:flex;justify-content:space-between;align-items:center;gap:6px;border-radius:6px;padding:7px 6px;color:var(--text);text-decoration:none;font-size:12px;overflow-wrap:anywhere}
-    .section-link:hover{background:var(--hover)}
-    .section-link[aria-current="page"]{background:var(--panel-2);color:var(--cyan);box-shadow:inset 0 -3px var(--cyan)}
-    .nav-count{font-size:10px;white-space:nowrap;text-align:right;flex-shrink:0}
-    .section-total{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 18px;border-bottom:1px solid var(--line-soft)}
-    .panel-handoffs,.panel-notes-unavailable{margin:0}
-    .dashboard-content [data-section],.dashboard-content [data-focus]{scroll-margin-top:200px}
-    .dashboard-content .panel[data-section-active="true"]{border-color:var(--cyan)}
-    @media(max-width:760px){
-      .dashboard-content [data-section][data-section-active="false"]{display:none!important}
-    }
     @keyframes activity-ripple{0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--cyan) 35%,transparent)}100%{box-shadow:0 0 0 10px transparent}}
     @keyframes task-arrival{from{transform:translateX(-12px);background:color-mix(in srgb,var(--cyan) 22%,var(--panel))}to{transform:translateX(0);background:var(--panel)}}
     @media(prefers-reduced-motion:no-preference){
@@ -252,12 +235,24 @@
       .timeline-entry{flex-basis:230px}
       .legend{flex-wrap:wrap}
     }
-    @container(max-width:1200px){.board{grid-template-columns:repeat(2,minmax(0,1fr))}}
-    @container(max-width:620px){.board{grid-template-columns:1fr}}
+    @container(max-width:860px){.board{grid-template-columns:repeat(2,minmax(0,1fr))}}
+    @container(max-width:460px){.board{grid-template-columns:1fr}}
+    @media(max-width:1280px){
+      .workspace{grid-template-columns:280px minmax(0,1fr)}
+      .col-feed{position:static;max-height:none;overflow:visible;grid-column:1/-1;grid-template-columns:repeat(2,minmax(0,1fr))}
+      .panel-feed{grid-column:1/-1}
+      .panel-feed .items{max-height:400px}
+    }
     @media(max-width:900px){.sections{grid-template-columns:1fr}}
     @media(max-width:760px){
       .shell{padding:16px}
       .workspace{grid-template-columns:1fr;gap:16px}
+      .col{display:contents}
+      .panel-team{order:1}.panel-board{order:2}.panel-huddles{order:3}.panel-questions{order:4}
+      .panel-feed{order:5}.panel-prompt{order:6}.panel-messages{order:7}
+      .panel-notes-unavailable,.panel-handoffs{order:7}
+      .panel-claims{order:8}.panel-rules{order:9}.panel-patches{order:10}.panel-audit{order:11}
+      .panel-feed{grid-column:auto}
       .messages{max-height:60dvh;padding:14px}
       .message{max-width:94%;min-width:0;flex-shrink:0}
       .subtitle{font-size:12px}
@@ -280,8 +275,6 @@
     @media(pointer:coarse){
       button,.auth input,summary{min-height:44px}
     }
-    .section-link{flex-wrap:nowrap;min-height:44px}
-    .section-link>span:first-child{min-width:0;white-space:nowrap;overflow-wrap:normal}
     @media(prefers-reduced-motion:no-preference){button{transition:border-color .15s ease,background-color .15s ease}.task-card{transition:box-shadow .15s ease}}
   </style>
 </head>
@@ -347,12 +340,9 @@
     </section>
     <dialog id="shortcuts" aria-labelledby="shortcuts-title">
       <h2 id="shortcuts-title">Keyboard shortcuts</h2>
-      <dl><dt><kbd>/</kbd></dt><dd>Focus global search</dd><dt><kbd>j</kbd></dt><dd>Next visible card</dd><dt><kbd>k</kbd></dt><dd>Previous visible card</dd><dt><kbd>[</kbd></dt><dd>Previous section group</dd><dt><kbd>]</kbd></dt><dd>Next section group</dd><dt><kbd>?</kbd></dt><dd>Show this list</dd><dt><kbd>Esc</kbd></dt><dd>Close this list or leave search</dd></dl>
+      <dl><dt><kbd>/</kbd></dt><dd>Focus global search</dd><dt><kbd>j</kbd></dt><dd>Next visible card</dd><dt><kbd>k</kbd></dt><dd>Previous visible card</dd><dt><kbd>?</kbd></dt><dd>Show this list</dd><dt><kbd>Esc</kbd></dt><dd>Close this list or leave search</dd></dl>
       <p class="hint">Shortcuts do not run while typing in a field.</p><button id="close-shortcuts" type="button">Close</button>
     </dialog>
-    <div id="dashboard-layout" class="dashboard-layout" hidden>
-      <nav id="section-nav" class="panel section-nav" aria-label="Dashboard sections"></nav>
-      <div class="dashboard-content">
     <section id="timeline-panel" class="panel timeline-panel" aria-labelledby="timeline-title" hidden>
       <div class="panel-heading"><div><div class="panel-label">Tasks + messages · oldest first</div><h2 id="timeline-title">Timeline</h2></div><span id="timeline-count" class="count">0</span></div>
       <p id="timeline-hint" class="hint filter-hint">Task creation, latest update and loaded task events only; not a complete status history. Scroll horizontally to explore.</p>
@@ -374,7 +364,7 @@
           </div>
         </section>
         <section id="rules-panel" class="panel panel-rules" aria-labelledby="rules-title">
-          <div class="panel-heading"><h2 id="rules-title">Coordination guide</h2><span id="rules-count" class="count" title="Coordination guide and house rules combined">0</span></div><dl id="rules" class="rules"></dl>
+          <div class="panel-heading"><h2 id="rules-title">Coordination guide</h2></div><dl id="rules" class="rules"></dl>
         </section>
         <section id="house-rules-panel" class="panel panel-rules" aria-labelledby="house-rules-title" hidden>
           <div class="panel-heading"><h2 id="house-rules-title">House rules</h2></div><dl id="house-rules" class="rules"></dl>
@@ -423,7 +413,6 @@
       <aside class="col col-feed" aria-label="Live activity">
         <section id="activity-panel" class="panel panel-feed" aria-labelledby="news-title">
           <div class="panel-heading"><div><div class="panel-label">Team news · newest first</div><h2 id="news-title">Live feed</h2></div><span id="news-count" class="count">0</span></div>
-          <div class="section-total"><span class="meta">Activity · feed + audit</span><span id="activity-count" class="count">0</span></div>
           <div id="news" class="items" tabindex="0" aria-label="Live team news feed"></div>
         </section>
         <section id="patches-panel" class="panel panel-patches" aria-labelledby="patches-title">
@@ -436,8 +425,6 @@
         </section>
       </aside>
     </main>
-      </div>
-    </div>
   </div>
   <script nonce="__AGENTMESH_NONCE__">
     (() => {
@@ -522,7 +509,7 @@
       const setStatus = (text, state = "") => {
         get("connection-status").textContent = text;
         get("connection-status").className = "status meta" + (state ? " " + state : "");
-        sectionNav.refresh();
+        panelSummaries.refresh();
       };
       const empty = (container, text) => container.append(element("p", "empty", text));
       let authenticated = false, lastEventId = 0, session = 0, timer = null, controller = null, authBusy = false;
@@ -701,52 +688,11 @@
         node.dataset.focus = node.id;
         return node;
       }
-      const sectionNav = (() => {
+      // Keep loaded notes and handoff summaries independent of page navigation.
+      const panelSummaries = (() => {
         refresh = stableRedraw(refresh);
-        const groups = [
-          ["Work", [["board", "Board", "task-count", ["board-panel"]], ["timeline", "Timeline", "timeline-count", ["timeline-panel"]], ["plans", "Plans / Master prompt", "master-count", ["plans-panel"]], ["claims", "Claims", "claim-count", ["claims-panel"]]]],
-          ["Conversation", [["transcript", "Transcript", "message-count", ["transcript-panel", "asks"]], ["questions", "Questions", "question-count", ["questions-panel"]], ["huddles", "Huddles", "huddle-count", ["huddles-panel"]]]],
-          ["Knowledge", [["notes", "Notes", "team-notes-count", ["team-notes-panel", "notes-unavailable"]], ["handoffs", "Handoffs", "handoff-count", ["handoffs-panel"]], ["patches", "Patches", "patch-count", ["patches-panel"]]]],
-          ["Team and activity", [["members", "Members and presence", "team-count", ["members-panel"]], ["activity", "Activity", "activity-count", ["activity-panel", "audit-panel"]], ["rules", "Team rules", "rules-count", ["rules-panel", "house-rules-panel"]]]]
-        ];
-        const entries = groups.flatMap(([, rows]) => rows), links = new Map(), badges = new Map();
-        const sectionKey = "agentmesh:current-section";
-        let current = storage.get(sectionKey), handoffSignature = null;
-        if (!entries.some(([id]) => id === current)) current = "board";
+        let handoffSignature = null;
         const put = (node, value) => { const text = String(value); if (node && node.textContent !== text) node.textContent = text; };
-        for (const [index, [name, rows]] of groups.entries()) {
-          const group = element("section", "nav-group"), heading = element("h2", "nav-heading");
-          heading.id = "nav-group-" + index;
-          group.setAttribute("aria-labelledby", heading.id);
-          heading.append(element("span", "", name));
-          const count = element("span", "count group-count", rows.length);
-          count.setAttribute("aria-label", rows.length + " sections"); heading.append(count); group.append(heading);
-          for (const [id, label, , targets] of rows) {
-            const link = element("a", "section-link"), badge = element("span", "count nav-count", "0");
-            link.href = "#" + targets[0]; link.dataset.section = id; link.setAttribute("data-section-link", "");
-            link.setAttribute("aria-controls", targets.join(" "));
-            link.append(element("span", "", label), badge);
-            link.addEventListener("click", event => { event.preventDefault(); select(id, true); });
-            links.set(id, link); badges.set(id, badge); group.append(link);
-          }
-          get("section-nav").append(group);
-        }
-        function apply() {
-          for (const [id, , , targets] of entries) {
-            const link = links.get(id);
-            const nodes = targets.map(get).filter(Boolean), target = nodes.find(node => !node.hidden) || nodes[0];
-            if (target) link.href = "#" + target.id;
-            link.setAttribute("aria-controls", nodes.map(node => node.id).join(" "));
-            if (id === current) link.setAttribute("aria-current", "page"); else link.removeAttribute("aria-current");
-            for (const target of targets) {
-              const node = get(target);
-              if (node) {
-                node.dataset.section = id; node.dataset.sectionActive = String(id === current);
-                if (node.className.split(/\s+/).includes("panel")) node.tabIndex = -1;
-              }
-            }
-          }
-        }
         function refresh() {
           const notes = get("team-notes-panel"), available = Boolean(notes && !notes.hidden);
           get("notes-unavailable").hidden = available;
@@ -765,39 +711,17 @@
           }
           put(get("handoff-count"), available || sources.length ? sources.length : "Unavailable");
           get("handoffs-board").disabled = !available;
-          const feed = Number(get("news-count").textContent) || 0, audit = Number(get("audit-count").textContent) || 0;
-          put(get("activity-count"), feed + audit);
-          put(get("rules-count"), get("rules").querySelectorAll(".rule").length + (get("house-rules-panel").hidden ? 0 : get("house-rules").querySelectorAll(".rule").length));
-          for (const [id, , countId] of entries) {
-            const source = id === "notes" && !available ? get("notes-unavailable-count") : get(countId);
-            if (source && !source.textContent.trim()) put(source, "0");
-            put(badges.get(id), source?.textContent || "0");
-          }
-          apply();
-        }
-        function select(id, focus = false) {
-          const entry = entries.find(([value]) => value === id);
-          if (!entry) return;
-          current = id; storage.set(sectionKey, id);
-          enhancements.view(id === "timeline", false); refresh();
-          if (focus) {
-            const target = entry[3].map(get).find(node => node && !node.hidden);
-            target?.scrollIntoView?.({ block: "nearest", inline: "nearest" }); target?.focus({ preventScroll: true });
-          }
-        }
-        function move(direction) {
-          const index = groups.findIndex(([, rows]) => rows.some(([id]) => id === current));
-          const next = groups[(index + direction + groups.length) % groups.length][1][0][0];
-          select(next); links.get(next).focus();
         }
         function reset() {
-          get("dashboard-layout").hidden = true; get("handoffs-list").replaceChildren(); handoffSignature = null;
-          put(get("handoff-count"), "Unavailable"); put(get("activity-count"), "0"); put(get("rules-count"), "0");
-          for (const badge of badges.values()) put(badge, "0");
+          get("handoffs-list").replaceChildren(); handoffSignature = null;
+          put(get("handoff-count"), "Unavailable");
         }
-        get("handoffs-board").addEventListener("click", () => select("board", true));
-        apply();
-        return { select, move, refresh, reset, open() { get("dashboard-layout").hidden = false; select(current); } };
+        get("handoffs-board").addEventListener("click", () => {
+          enhancements.view(false);
+          const board = get("board-panel"); board.tabIndex = -1;
+          board.scrollIntoView?.({ block: "nearest", inline: "nearest" }); board.focus({ preventScroll: true });
+        });
+        return { refresh, reset };
       })();
       // One in-memory index shared by both existing access paths. No extra reads.
       const enhancements = (() => {
@@ -912,7 +836,7 @@
           if (!hits.length) empty(box, "No matches in the loaded data.");
         }
         function reveal(kind, id) {
-          sectionNav.select({ task: "board", message: "transcript", question: "questions", huddle: "huddles", note: "notes", handoff: "board" }[kind] || "board");
+          switchView(false);
           const target = get(itemId(kind, id));
           if (!target) { actionStatus("This item is no longer loaded. Refresh the relevant panel.", true); return; }
           const card = kind === "task" ? target : target.closest(".task-card");
@@ -948,7 +872,7 @@
           }
           rows.sort((a, b) => a.time - b.time);
           get("timeline-count").textContent = String(rows.length);
-          sectionNav.refresh();
+          panelSummaries.refresh();
           if (!timeline) return;
           track.replaceChildren();
           for (const row of rows) {
@@ -965,14 +889,13 @@
           get("timeline-count").textContent = String(rows.length);
           get("timeline-hint").textContent = "Task creation, latest update and loaded task events only; not a complete status history. Scroll horizontally to explore." + (missing ? " Time unavailable for " + missing + " items; not plotted." : "");
         }
-        function switchView(showTimeline, syncSection = true) {
+        function switchView(showTimeline) {
           timeline = showTimeline;
           get("timeline-panel").hidden = !timeline;
           get("tasks").hidden = timeline;
           get("board-view").setAttribute("aria-pressed", String(!timeline));
           get("timeline-view").setAttribute("aria-pressed", String(timeline));
           renderTimeline();
-          if (syncSection) sectionNav.select(showTimeline ? "timeline" : "board");
         }
         function working() {
           const box = get("working-list"); box.replaceChildren();
@@ -1043,7 +966,7 @@
           get("search-status").textContent = ""; get("working-list").replaceChildren(); get("timeline-track").replaceChildren();
           get("filter-status").hidden = true; get("notify-toggle").textContent = "Enable notifications"; get("notify-toggle").setAttribute("aria-pressed", "false");
           get("notify-status").textContent = "Off · only new questions and assignments for you";
-          closeHelp(); switchView(false, false); renderViews(); sectionNav.reset();
+          closeHelp(); switchView(false); renderViews(); panelSummaries.reset();
         }
         const md = value => String(value ?? "").replace(/[\\`*_{}\[\]<>()#!|~]/g, "\\$&");
         function download(kind) {
@@ -1106,7 +1029,6 @@
           if (["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement?.tagName) || document.activeElement?.isContentEditable) return;
           if (event.key === "/") { event.preventDefault(); get("global-search").focus(); }
           if (event.key === "?") { event.preventDefault(); openHelp(); }
-          if (["[", "]"].includes(event.key)) { event.preventDefault(); sectionNav.move(event.key === "[" ? -1 : 1); }
           if (["j", "k"].includes(event.key)) {
             const selector = timeline ? ".timeline-entry" : ".task-card,.message,.team-note,.task-handoff,#questions .item,#huddle-list .huddle";
             const cards = Array.from(document.querySelectorAll(selector)).filter(node => (node.getClientRects ? node.getClientRects().length : !node.hidden) && !node.closest("[hidden]"));
@@ -1122,7 +1044,7 @@
         if (typeof MutationObserver !== "undefined") new MutationObserver(() => {
           if (get("dashboard-tools").hidden) return;
           clearTimeout(extraTimer);
-          extraTimer = setTimeout(() => { extraTimer = null; renderSearch(); sectionNav.refresh(); }, 80);
+          extraTimer = setTimeout(() => { extraTimer = null; renderSearch(); panelSummaries.refresh(); }, 80);
         }).observe(get("workspace"), { childList: true, subtree: true, characterData: true });
         renderViews();
         return {
@@ -1926,7 +1848,6 @@
         get("coordination").hidden = false;
         get("sign-out").hidden = false;
         get("dashboard-tools").hidden = false;
-        sectionNav.open();
         setStatus("Connecting…");
         poll();
         timer = setInterval(poll, 4000);

@@ -28,6 +28,7 @@ SERVER = Path(__file__).resolve().parents[1]
 HARNESS = Path(__file__).with_name("dashboard_polish_chrome.cjs")
 NONCE = "dashboard-local-fixture-nonce"
 CREDENTIAL = "local-snapshot-credential-" + "x" * 40
+EVIDENCE = Path("/tmp/nav-remove-verify/polish")
 MALICIOUS = '<img id="fixture-injection" src=x onerror="window.__injected=true">'
 
 
@@ -184,6 +185,7 @@ def snapshot_handler(snapshot, requests):
 
 def test_dashboard_polish_in_real_chrome():
     requests = []
+    EVIDENCE.mkdir(parents=True, exist_ok=True)
     http = ThreadingHTTPServer(("127.0.0.1", 0), snapshot_handler(home_snapshot(), requests))
     thread = threading.Thread(target=http.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True)
     thread.start()
@@ -197,7 +199,7 @@ def test_dashboard_polish_in_real_chrome():
             environment = {"PATH": os.environ.get("PATH", ""), "HOME": str(root), "TMPDIR": str(chrome_tmp), "XDG_CONFIG_HOME": str(root / "config"), "XDG_CACHE_HOME": str(root / "cache")}
             chrome_binary = shutil.which("google-chrome") or shutil.which("chromium")
             assert chrome_binary, "Headless Chrome is required for dashboard acceptance"
-            with (root / "chrome.log").open("w+") as log:
+            with (EVIDENCE / "polish-chrome.log").open("w+") as log:
                 chrome = subprocess.Popen([
                     chrome_binary, "--headless=new", "--no-sandbox", "--disable-dev-shm-usage", "--remote-debugging-address=127.0.0.1", "--remote-debugging-port=0",
                     "--disable-background-networking", "--disable-component-update", "--disable-default-apps", "--disable-extensions", "--disable-sync", "--disable-breakpad", "--disable-crash-reporter", "--disable-domain-reliability", "--no-first-run", "--no-default-browser-check",
@@ -211,9 +213,10 @@ def test_dashboard_polish_in_real_chrome():
                         assert chrome.poll() is None, "Headless Chrome exited before becoming ready"
                         assert time.monotonic() < deadline, "Headless Chrome did not become ready"
                         time.sleep(0.05)
-                    settings = {"debugPort": int(active_port.read_text().splitlines()[0]), "baseUrl": f"http://localhost:{http.server_port}", "credential": CREDENTIAL, "downloads": str(downloads), "malicious": MALICIOUS}
+                    settings = {"debugPort": int(active_port.read_text().splitlines()[0]), "baseUrl": f"http://localhost:{http.server_port}", "credential": CREDENTIAL, "downloads": str(downloads), "malicious": MALICIOUS, "evidence": str(EVIDENCE)}
                     result = subprocess.run([find_node(), str(HARNESS)], input=json.dumps(settings), text=True, capture_output=True, cwd=SERVER, env=environment, timeout=180, check=False)
                     output = (result.stdout + result.stderr).replace(CREDENTIAL, "[redacted]").strip()
+                    (EVIDENCE / "polish-result.txt").write_text(output + "\n")
                     assert result.returncode == 0, output or "Real Chrome dashboard acceptance failed"
                     assert "dashboard-polish-chrome-ok" in output
                 finally:
@@ -228,6 +231,7 @@ def test_dashboard_polish_in_real_chrome():
         http.shutdown()
         http.server_close()
         thread.join(timeout=5)
+        (EVIDENCE / "polish-http-requests.json").write_text(json.dumps(requests, indent=2) + "\n")
         assert not thread.is_alive(), "Local snapshot server did not stop"
     assert "/api/state" in requests and "/api/legacy/transcript" in requests
     assert "/auth/login" in requests and "/auth/logout" in requests

@@ -17,7 +17,7 @@ from agentmesh_server.hub import find_node
 from team_features_e2e import chrome_temporary_directory
 from test_dashboard_polish import CREDENTIAL, SERVER, home_snapshot, snapshot_handler
 
-EVIDENCE = Path("/tmp/scrollfix-verify")
+EVIDENCE = Path("/tmp/nav-remove-verify/scroll")
 
 
 def long_home_snapshot():
