@@ -106,7 +106,7 @@ async function main(settings) {
       assert.ok(report.baseline.containers.some(row => row.id === id && row.top > 0), id + ' is partway down');
     }
     if (horizontal) {
-      for (const id of ['timeline-track', 'section-nav']) {
+      for (const id of ['timeline-track']) {
         assert.ok(report.baseline.containers.some(row => row.id === id && row.left > 0), id + ' is horizontally scrolled');
       }
     } else {
@@ -174,19 +174,12 @@ async function main(settings) {
     assert.equal(await cdp.evaluate(`document.getElementById('shortcuts').open`), true);
     await key('Escape', 'Escape');
     assert.equal(await cdp.evaluate(`document.getElementById('shortcuts').open`), false);
-    await key(']', 'BracketRight');
-    assert.equal(await cdp.evaluate(`document.querySelector('#section-nav [aria-current="page"]').dataset.section`), 'transcript');
-    await key('[', 'BracketLeft');
-    assert.equal(await cdp.evaluate(`document.querySelector('#section-nav [aria-current="page"]').dataset.section`), 'board');
-    evidence.controls.push('j/k, search focus, typing guard, help, section group shortcuts, search reveal');
+    assert.equal(await cdp.evaluate(`document.querySelectorAll('#section-nav, .nav-group, .group-count, .nav-count, [data-section]').length`), 0, 'group navigation remains removed after refresh, shortcuts and search');
+    const panelIds = ['members-panel', 'rules-panel', 'claims-panel', 'questions-panel', 'board-panel',
+      'huddles-panel', 'plans-panel', 'transcript-panel', 'activity-panel', 'patches-panel', 'audit-panel'];
+    for (const id of panelIds) assert.ok(await cdp.evaluate(`!!document.getElementById(${literal(id)})?.getClientRects().length`), id + ' remains reachable without group navigation');
+    evidence.controls.push('j/k, search focus, typing guard, help, search reveal and ungrouped panel access');
 
-    const sections = await cdp.evaluate(`Array.from(document.querySelectorAll('#section-nav [data-section-link]'),node=>node.dataset.section)`);
-    assert.equal(sections.length, 13);
-    for (const section of sections) {
-      await cdp.evaluate(`document.querySelector('#section-nav [data-section="${section}"]').click()`);
-      assert.ok(await cdp.evaluate(`(() => {const link=document.querySelector('#section-nav [aria-current="page"]');return link?.dataset.section===${literal(section)} && link.getAttribute('aria-controls').split(' ').some(id=>document.getElementById(id)?.getClientRects().length);})()`), section + ' remains navigable');
-    }
-    evidence.controls.push('all thirteen sections');
     for (const button of ['export-board', 'export-transcript']) {
       const previous = new Set(fs.readdirSync(settings.downloads));
       await click(button);
@@ -208,10 +201,11 @@ async function main(settings) {
     await waitFor(`!document.getElementById('auth').hidden && document.getElementById('workspace').hidden`, 'sign-out');
     evidence.controls.push('sign-out');
     assert.deepEqual(cdp.exceptions, [], 'no uncaught browser exceptions');
+    assert.deepEqual(cdp.consoleErrors, [], 'no console errors');
     assert.deepEqual(cdp.remoteRequests, [], 'no external hosts');
     assert.deepEqual(await cdp.evaluate('window.__scrollConsoleErrors'), []);
     assert.deepEqual(await cdp.evaluate('window.__scrollCspViolations'), []);
-    console.log('dashboard-scroll-chrome-ok: real 4s refreshes, window/all container top+left, changing transcript, recreated columns, preserved drafts/focus/selection/discussion, shortcuts/search/exports/sections/sign-in');
+    console.log('dashboard-scroll-chrome-ok: real 4s refreshes, window/all container top+left, changing transcript, recreated columns, preserved drafts/focus/selection/discussion, shortcuts/search/exports/ungrouped-panels/sign-in');
   } catch (error) {
     evidence.error = String(error.stack || error).replaceAll(settings.credential, '[redacted]');
     await screenshot('scroll-failure').catch(() => {});
@@ -219,6 +213,7 @@ async function main(settings) {
   } finally {
     evidence.requests = cdp.requests;
     evidence.exceptions = cdp.exceptions;
+    evidence.consoleErrors = cdp.consoleErrors;
     evidence.remoteRequests = cdp.remoteRequests;
     fs.writeFileSync(path.join(settings.evidence, 'scroll-evidence.json'), JSON.stringify(evidence, null, 2) + '\n');
     cdp.close();

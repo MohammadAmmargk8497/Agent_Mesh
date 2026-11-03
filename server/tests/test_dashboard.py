@@ -65,6 +65,7 @@ def test_dashboard_inline_assets_keep_nonce_and_no_event_attributes():
     assert all(attrs.get("nonce") == "__AGENTMESH_NONCE__" for _, attrs in executable)
     assert all("src" not in attrs for tag, attrs in executable if tag == "script")
     for _, attrs in document.elements:
+        assert "style" not in attrs
         assert not any(name.lower().startswith("on") for name in attrs)
 
 
@@ -104,6 +105,38 @@ def test_dashboard_has_coordination_panels_and_huddle_navigation():
         "master", "prompt-badge", "huddles", "huddle-list", "huddle-view",
         "claims", "news", "messages", "patches", "audit",
     } <= ids
+
+
+def test_dashboard_restores_ungrouped_columns_and_retains_feature_controls():
+    html, document = dashboard_document()
+    ids = {attrs["id"] for _, attrs in document.elements if "id" in attrs}
+    assert {
+        "board-panel", "timeline-panel", "timeline-track", "handoffs-panel", "notes-unavailable",
+        "global-search", "search-results", "export-board", "export-transcript", "task-filter",
+        "saved-views", "save-view", "delete-view", "notify-toggle", "shortcuts",
+    } <= ids
+    assert "section-nav" not in html
+    assert "agentmesh:current-section" not in html
+    assert not any(name.startswith("data-section") for _, attrs in document.elements for name in attrs)
+    assert not any(
+        token in {"nav-group", "nav-heading", "group-count", "nav-count", "dashboard-layout", "dashboard-content"}
+        for _, attrs in document.elements for token in attrs.get("class", "").split()
+    )
+
+    def walk(node):
+        yield node
+        for child in node["children"]:
+            if isinstance(child, dict):
+                yield from walk(child)
+
+    workspace = next(node for node in walk(document.tree) if node["attrs"].get("id") == "workspace")
+    columns = [node for node in workspace["children"] if isinstance(node, dict)]
+    assert [node["attrs"].get("class") for node in columns] == ["col col-team", "col col-work", "col col-feed"]
+    assert ".workspace{display:grid;grid-template-columns:260px minmax(0,1fr) 300px;" in html
+    assert '.col{display:contents}' in html
+    shortcuts = ["".join(child for child in node["children"] if isinstance(child, str))
+                 for node in walk(document.tree) if node["tag"] == "kbd"]
+    assert shortcuts == ["/", "j", "k", "?", "Esc"]
 
 
 def test_dashboard_openhuddle_attribution_includes_mit_notice():

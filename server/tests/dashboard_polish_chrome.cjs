@@ -12,7 +12,7 @@ async function connect(url, origin) {
     socket.addEventListener('error', () => reject(new Error('Cannot connect to loopback Chrome')), { once: true });
   });
   let sequence = 0;
-  const pending = new Map(), remoteRequests = [], exceptions = [], requests = [];
+  const pending = new Map(), remoteRequests = [], exceptions = [], requests = [], consoleErrors = [];
   function call(method, params = {}) {
     return new Promise((resolve, reject) => {
       const id = ++sequence;
@@ -33,6 +33,8 @@ async function connect(url, origin) {
       const { request } = message.params;
       requests.push({ path: new URL(request.url).pathname, method: request.method,
         authorization: Object.keys(request.headers).some(name => name.toLowerCase() === 'authorization') });
+    } else if (message.method === 'Runtime.consoleAPICalled' && message.params.type === 'error') {
+      consoleErrors.push(message.params.args.map(argument => argument.value ?? argument.description ?? '').join(' '));
     } else if (message.method === 'Runtime.exceptionThrown') {
       exceptions.push(message.params.exceptionDetails.text);
     } else if (message.method === 'Fetch.requestPaused') {
@@ -44,7 +46,7 @@ async function connect(url, origin) {
     }
   });
   return {
-    call, remoteRequests, exceptions, requests,
+    call, remoteRequests, exceptions, requests, consoleErrors,
     async evaluate(expression) {
       const result = await call('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true });
       if (result.exceptionDetails) throw new Error('Browser evaluation failed: ' + (result.exceptionDetails.exception?.description || result.exceptionDetails.text));
@@ -67,6 +69,13 @@ async function main(settings) {
   const browser = await connect(version.webSocketDebuggerUrl, origin.origin);
   let currentTarget = initialPage.id;
   const sessions = [cdp];
+  const evidence = { checks: [], layouts: [], screenshots: [], exports: [] };
+  fs.mkdirSync(settings.evidence, { recursive: true });
+  async function screenshot(name) {
+    const { data } = await cdp.call('Page.captureScreenshot', { format: 'png' });
+    fs.writeFileSync(path.join(settings.evidence, name + '.png'), Buffer.from(data, 'base64'));
+    evidence.screenshots.push(name + '.png');
+  }
   const literal = JSON.stringify;
   async function waitFor(expression, label) {
     const deadline = Date.now() + 15000;
@@ -79,11 +88,6 @@ async function main(settings) {
   }
   async function click(id) {
     await cdp.evaluate(`document.getElementById(${literal(id)}).click()`);
-  }
-  async function mouseClick(x, y) {
-    await cdp.call('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y, button: 'none' });
-    await cdp.call('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', clickCount: 1 });
-    await cdp.call('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', clickCount: 1 });
   }
   async function set(id, value, event = 'input') {
     await cdp.evaluate(`(() => { const field = document.getElementById(${literal(id)}); field.value = ${literal(value)}; field.dispatchEvent(new Event(${literal(event)}, {bubbles:true})); })()`);
@@ -103,9 +107,8 @@ async function main(settings) {
     await cdp.evaluate(`document.querySelector('#search-results a[data-kind="${kind}"]').click()`);
     assert.ok(await cdp.evaluate(`document.activeElement.textContent.toLowerCase().includes(${literal(query.toLowerCase())})`), kind + ' search focuses its item');
     assert.ok(await cdp.evaluate(`document.activeElement.getClientRects().length > 0`), kind + ' search reveals its item, including on phones');
-    if (await cdp.evaluate('document.documentElement.clientWidth <= 600')) {
-      assert.ok(await cdp.evaluate(`(() => { const section = document.querySelector('#section-nav [aria-current="page"]')?.dataset.section; const visible=Array.from(document.querySelectorAll('.panel[data-section]')).filter(panel=>panel.getClientRects().length); return !!section && visible.length>0 && visible.every(panel=>panel.dataset.section===section); })()`), kind + ' search selects its containing phone section');
-    }
+    assert.equal(await cdp.evaluate(`document.querySelectorAll('#section-nav, .nav-group, .group-count, .nav-count, [data-section]').length`), 0, kind + ' search reveals its target without restoring group navigation');
+    evidence.checks.push('search: ' + kind);
   }
   async function checkCookiePrivacy(label) {
     const cookie = (await cdp.call('Network.getCookies', { urls: [origin.href] })).cookies.find(cookie => cookie.name === 'agentmesh_session');
@@ -136,6 +139,8 @@ async function main(settings) {
     await page.call('Page.enable'); await page.call('Runtime.enable'); await page.call('Network.enable');
     await page.call('Fetch.enable', { patterns: [{ urlPattern: '*' }] });
     await page.call('Page.addScriptToEvaluateOnNewDocument', { source: `
+      window.__cspViolations = [];
+      document.addEventListener('securitypolicyviolation',event=>window.__cspViolations.push(event.violatedDirective));
       window.__storageWrites = [];
       const original = Storage.prototype.setItem;
       Storage.prototype.setItem = function(key, value) {
@@ -151,147 +156,52 @@ async function main(settings) {
     const size = await cdp.evaluate(`({viewport:document.documentElement.clientWidth, document:document.documentElement.scrollWidth, body:document.body.scrollWidth})`);
     assert.ok(size.document <= size.viewport && size.body <= size.viewport, `${width}px ${view}: page must not scroll horizontally (${JSON.stringify(size)})`);
   }
-  const navigationGroups = [
-    { title: 'Work', sections: ['board', 'timeline', 'plans', 'claims'] },
-    { title: 'Conversation', sections: ['transcript', 'questions', 'huddles'] },
-    { title: 'Knowledge', sections: ['notes', 'handoffs', 'patches'] },
-    { title: 'Team and activity', sections: ['members', 'activity', 'rules'] },
-  ];
-  const sectionCounts = {
-    board: 'task-count', timeline: 'timeline-count', plans: 'master-count', claims: 'claim-count',
-    transcript: 'message-count', questions: 'question-count', huddles: 'huddle-count',
-    notes: 'team-notes-count', handoffs: 'handoff-count', patches: 'patch-count',
-    members: 'team-count', activity: 'activity-count', rules: 'rules-count',
-  };
-  async function selectSection(section) {
-    const interaction = await cdp.evaluate(`(() => {
-      window.scrollTo(0, 0);
-      const nav = document.getElementById('section-nav');
-      const link = nav?.querySelector('[data-section-link][data-section="${section}"]');
-      if (!nav || !link) return null;
-      const before = nav.scrollLeft;
-      link.scrollIntoView({ block: 'nearest', inline: 'center' });
-      const navRect = nav.getBoundingClientRect();
-      const rect = link.getBoundingClientRect();
-      const x = Math.max(navRect.left + 8, Math.min(rect.left + rect.width / 2, navRect.right - 8));
-      const y = Math.max(navRect.top + 8, Math.min(rect.top + rect.height / 2, navRect.bottom - 8));
-      const hit = document.elementFromPoint(x, y);
-      return {
-        x,
-        y,
-        before,
-        after: nav.scrollLeft,
-        navClientWidth: nav.clientWidth,
-        navScrollWidth: nav.scrollWidth,
-        hitSection: hit?.closest('[data-section-link]')?.dataset.section || null,
-        hitInsideNav: !!hit?.closest('#section-nav'),
-      };
-    })()`);
-    assert.ok(interaction, section + ' navigation link exists');
-    assert.equal(interaction.hitInsideNav, true, section + ' navigation hit target stays inside the sticky bar');
-    assert.equal(interaction.hitSection, section, section + ' navigation hit test reaches the intended tab');
-    await mouseClick(interaction.x, interaction.y);
-    await waitFor(`document.querySelector('#section-nav [data-section-link][aria-current="page"]')?.dataset.section===${literal(section)}`, section + ' navigation selection');
-    return interaction;
-  }
-  async function checkSectionNavigation(width) {
-    await cdp.evaluate('window.scrollTo(0, 0)');
+  const panelIds = ['members-panel', 'rules-panel', 'claims-panel', 'questions-panel',
+    'board-panel', 'huddles-panel', 'plans-panel', 'transcript-panel', 'team-notes-panel',
+    'handoffs-panel', 'activity-panel', 'patches-panel', 'audit-panel'];
+  async function checkUngroupedLayout(width) {
     await click('board-view');
-    await waitFor(`document.querySelector('#section-nav [aria-current="page"]')?.dataset.section==='board'`, width + 'px board section before sticky navigation checks');
-    const nav = await cdp.evaluate(`(() => {
-      const nav=document.getElementById('section-nav');
-      const content=document.querySelector('.dashboard-content');
-      const links=Array.from(nav?.querySelectorAll('[data-section-link]')||[]);
-      const linkTops=[...new Set(links.map(link=>Math.round(link.getBoundingClientRect().top)))];
-      return {
-        visible:!!nav?.getClientRects().length,
-        groups:Array.from(nav?.querySelectorAll('.nav-group')||[],group=>{const heading=group.querySelector('h2,h3,h4')?.cloneNode(true);heading?.querySelectorAll('.group-count').forEach(count=>count.remove());return {heading:heading?.textContent.trim(),count:group.querySelector('.group-count')?.textContent.trim(),sections:Array.from(group.querySelectorAll('[data-section-link]'),link=>link.dataset.section)};}),
-        sections:links.map(link=>link.dataset.section),
-        scrollable:nav ? nav.scrollWidth > nav.clientWidth + 1 : false,
-        wraps:linkTops.length > 1,
-        navLeft:nav?.getBoundingClientRect().left,
-        navWidth:nav?.getBoundingClientRect().width,
-        contentLeft:content?.getBoundingClientRect().left,
-        contentWidth:content?.getBoundingClientRect().width,
-      };
+    await cdp.evaluate('window.scrollTo(0,0)');
+    const layout = await cdp.evaluate(`(() => {
+      const workspace=document.getElementById('workspace');
+      const columns=Array.from(workspace.children).filter(node=>node.classList.contains('col'));
+      const rect=node=>{const value=node.getBoundingClientRect();return {left:value.left,top:value.top+window.scrollY,width:value.width};};
+      return {navigation:document.querySelectorAll('#section-nav, .section-nav, .nav-group, .nav-heading, .group-count, .nav-count, [data-section], [data-section-active]').length,
+        wrapper:!!document.querySelector('.dashboard-layout, .dashboard-content'),
+        headings:Array.from(document.querySelectorAll('h2,h3,h4'),node=>node.textContent.trim()).filter(text=>['Work','Conversation','Knowledge','Team and activity'].includes(text)),
+        tracks:getComputedStyle(workspace).gridTemplateColumns.split(' ').map(Number.parseFloat),
+        columns:columns.map(node=>({className:node.className,display:getComputedStyle(node).display,...rect(node)})),
+        panels:${literal(panelIds)}.map(id=>({id,visible:!!document.getElementById(id)?.getClientRects().length})),
+        inlineStyles:document.querySelectorAll('[style]').length};
     })()`);
-    assert.equal(nav.visible, true, width + 'px section navigation is visible');
-    assert.deepEqual(nav.groups, navigationGroups.map(group=>({heading:group.title,count:String(group.sections.length),sections:group.sections})), width + 'px navigation has four named groups and exact section counts');
-    assert.deepEqual(nav.sections, Object.keys(sectionCounts), width + 'px every section has exactly one navigation entry');
-    assert.ok(Math.abs(nav.navLeft - nav.contentLeft) <= 1, width + 'px sticky navigation aligns with the dashboard content left edge');
-    assert.ok(Math.abs(nav.navWidth - nav.contentWidth) <= 2, width + 'px sticky navigation spans the dashboard content width');
-    const position = await cdp.evaluate(`(() => {
-      const nav=document.getElementById('section-nav').getBoundingClientRect();
-      const panels=Array.from(document.querySelectorAll('.panel[data-section]')).filter(panel=>panel.getClientRects().length).map(panel=>panel.getBoundingClientRect());
-      return {navBottom:nav.bottom,panelsTop:Math.min(...panels.map(panel=>panel.top)),sticky:getComputedStyle(document.getElementById('section-nav')).position};
-    })()`);
-    assert.equal(position.sticky, 'sticky', width + 'px section navigation stays sticky');
-    assert.ok(position.navBottom <= position.panelsTop + 1, width + 'px section navigation sits above the dashboard panels');
-    const sticky = await cdp.evaluate(`(() => {
-      const nav=document.getElementById('section-nav');
-      const naturalTop=Math.round(nav.getBoundingClientRect().top + window.scrollY);
-      const maxScroll=document.documentElement.scrollHeight - window.innerHeight;
-      const firstTarget=Math.min(maxScroll, naturalTop + 120);
-      window.scrollTo(0, firstTarget);
-      const stuck=nav.getBoundingClientRect().top;
-      const secondTarget=Math.min(maxScroll, naturalTop + 240);
-      window.scrollTo(0, secondTarget);
-      const stillStuck=nav.getBoundingClientRect().top;
-      window.scrollTo(0, 0);
-      return {naturalTop, firstTarget, secondTarget, stuck, stillStuck, maxScroll};
-    })()`);
-    assert.ok(sticky.naturalTop > 12, width + 'px navigation begins below the top of the page before sticking');
-    assert.ok(sticky.firstTarget > sticky.naturalTop, width + 'px page can scroll past the natural navigation position');
-    assert.ok(Math.abs(sticky.stuck - 12) <= 4, width + 'px navigation stays sticky after page scroll');
-    if (sticky.secondTarget > sticky.naturalTop) assert.ok(Math.abs(sticky.stillStuck - 12) <= 4, width + 'px navigation remains sticky deeper into the page');
-    if (width === 390) assert.ok(nav.scrollable || nav.wraps, '390px navigation stays usable by wrapping or scrolling inside the sticky bar');
-    for (const section of Object.keys(sectionCounts)) {
-      if (width === 390 && section === 'rules') await cdp.evaluate(`document.getElementById('section-nav').scrollLeft = 0`);
-      const interaction = await selectSection(section);
-      const state = await cdp.evaluate(`(() => {
-        const nav=document.getElementById('section-nav'),links=Array.from(nav.querySelectorAll('[data-section-link]'));
-        const link=links.find(link=>link.dataset.section===${literal(section)}),counter=document.getElementById(${literal(sectionCounts[section])});
-        const visible=Array.from(document.querySelectorAll('.panel[data-section]')).filter(panel=>panel.getClientRects().length);
-        return {current:links.filter(link=>link.getAttribute('aria-current')==='page').map(link=>link.dataset.section),badge:link.querySelector('.nav-count')?.textContent.trim(),count:counter?.textContent.trim(),stored:localStorage.getItem('agentmesh:current-section'),visible:visible.map(panel=>panel.dataset.section),linkVisible:!!link.getClientRects().length,targetExists:!!document.getElementById(decodeURIComponent(link.hash.slice(1))),workingListVisible:!!document.getElementById('working-list')?.getClientRects().length,workingText:document.getElementById('working-list')?.textContent || ''};
-      })()`);
-      assert.deepEqual(state.current, [section], width + 'px ' + section + ' is the only aria-current entry');
-      assert.equal(state.linkVisible, true, width + 'px ' + section + ' link remains usable');
-      assert.equal(state.targetExists, true, width + 'px ' + section + ' link resolves to a real section');
-      assert.notEqual(state.count, undefined, section + ' has a real panel count');
-      assert.equal(state.badge, state.count, width + 'px ' + section + ' badge matches its panel');
-      assert.equal(state.stored, section, width + 'px current section is remembered as a non-secret identifier');
-      assert.ok(state.visible.includes(section), width + 'px ' + section + ' is reachable');
-      if (width === 390) {
-        assert.ok(state.visible.every(value=>value===section), 'phone shows only the selected ' + section + ' section');
-        if (section === 'members') {
-          assert.equal(state.workingListVisible, true, 'phone members section exposes the working-now list');
-          assert.ok(state.workingText.includes('T-102') && state.workingText.includes('agent-a'), 'phone members section keeps the working-now content');
-        }
-        if (section === 'rules' && interaction.navScrollWidth > interaction.navClientWidth + 1) {
-          assert.ok(interaction.after > interaction.before && interaction.after > 0, '390px navigation scrolls inside the sticky bar to reach later tabs');
-        }
-      } else {
-        for (const visibleSection of Object.keys(sectionCounts).filter(value=>value!=='timeline')) assert.ok(state.visible.includes(visibleSection), 'desktop keeps ' + visibleSection + ' in its compact overview');
-      }
-      await noHorizontalScroll(width, section + ' navigation');
+    assert.equal(layout.navigation, 0, width + 'px has no grouped navigation, group counts or section-selection attributes');
+    assert.equal(layout.wrapper, false, width + 'px has no replacement navigation layout wrapper');
+    assert.deepEqual(layout.headings, [], width + 'px has no former group headings');
+    assert.equal(layout.inlineStyles, 0, width + 'px has no inline style attributes');
+    assert.deepEqual(layout.columns.map(column=>column.className), ['col col-team','col col-work','col col-feed'], width + 'px retains the original sibling team, coordination and feed columns');
+    for (const panel of layout.panels) assert.equal(panel.visible, true, width + 'px keeps ' + panel.id + ' accessible without selecting a group');
+    if (width > 1280) {
+      assert.equal(layout.tracks.length, 3, width + 'px uses the original three-column workspace');
+      assert.equal(layout.tracks[0], 260, 'desktop team column stays 260px');
+      assert.equal(layout.tracks[2], 300, 'desktop feed column stays 300px');
+      assert.ok(layout.columns[0].left < layout.columns[1].left && layout.columns[1].left < layout.columns[2].left, 'desktop preserves left team / central work / right feed layout');
+      assert.ok(layout.columns.every(column=>Math.abs(column.top-layout.columns[0].top)<1), 'desktop columns start together, rather than below the board');
+    } else if (width <= 760) {
+      assert.equal(layout.tracks.length, 1, width + 'px stacks the original panels');
+      assert.ok(layout.columns.every(column=>column.display==='contents'), width + 'px preserves the non-group mobile layout');
+    } else {
+      assert.equal(layout.tracks.length, 2, width + 'px uses the original two-column responsive workspace');
+      assert.equal(layout.tracks[0], 280, width + 'px responsive team column stays 280px');
+      assert.ok(layout.columns[2].top > layout.columns[1].top, width + 'px activity moves below the main columns');
     }
-    await selectSection('board');
-    await cdp.evaluate('document.activeElement.blur()');
-    for (const [pressed, code, sections] of [
-      [']', 'BracketRight', ['transcript', 'notes', 'members', 'board']],
-      ['[', 'BracketLeft', ['members', 'notes', 'transcript', 'board']],
-    ]) {
-      for (const section of sections) {
-        await key(pressed, code);
-        assert.equal(await cdp.evaluate(`document.querySelector('#section-nav [aria-current="page"]')?.dataset.section`), section, width + 'px ' + pressed + ' moves between groups and wraps');
-      }
-    }
+    evidence.layouts.push({width,...layout});
+    await noHorizontalScroll(width, 'ungrouped layout');
   }
   async function checkBoardLayout(width, expectedColumns) {
     await setViewport(width);
     await cdp.evaluate('window.scrollTo(0, 0)');
     await click('board-view');
-    await waitFor(`document.querySelector('#section-nav [aria-current="page"]')?.dataset.section==='board'`, width + 'px board view selection');
+    await waitFor(`!document.getElementById('board-panel').hidden && document.getElementById('timeline-panel').hidden`, width + 'px board view selection');
     await waitFor(`document.querySelectorAll('#tasks .board-column').length===4`, width + 'px board columns loaded');
     const layout = await cdp.evaluate(`(() => {
       const panel = document.getElementById('board-panel').getBoundingClientRect();
@@ -302,34 +212,24 @@ async function main(settings) {
       });
       const uniqueLefts = [...new Set(columns.map(column => column.left))];
       const uniqueTops = [...new Set(columns.map(column => column.top))];
-      const docTop = rect => Math.round(rect.top + window.scrollY);
       return {
         panelLeft: Math.round(panel.left),
         panelWidth: Math.round(panel.width),
         boardLeft: Math.round(board.left),
         boardWidth: Math.round(board.width),
-        boardBottom: Math.round(board.bottom + window.scrollY),
         columns,
         uniqueLefts,
         uniqueTops,
-        membersTop: docTop(document.getElementById('members-panel').getBoundingClientRect()),
-        workingTop: docTop(document.getElementById('working-list').getBoundingClientRect()),
-        activityTop: docTop(document.getElementById('activity-panel').getBoundingClientRect()),
       };
     })()`);
     assert.equal(layout.columns.length, 4, width + 'px shows the four workflow columns');
     assert.equal(layout.uniqueLefts.length, expectedColumns, width + 'px board uses ' + expectedColumns + ' readable column tracks');
-    assert.ok(layout.columns.every(column => column.width >= 280), width + 'px board columns stay at least about 280px wide (' + JSON.stringify(layout.columns) + ')');
+    assert.ok(layout.columns.every(column => column.width >= 200), width + 'px board columns remain readable inside the restored center column (' + JSON.stringify(layout.columns) + ')');
     assert.ok(layout.boardLeft >= layout.panelLeft && layout.boardLeft + layout.boardWidth <= layout.panelLeft + layout.panelWidth + 1, width + 'px board stays inside its panel');
-    if (expectedColumns === 4) {
-      assert.equal(layout.uniqueTops.length, 1, '1440px board keeps all four workflow columns on the same row');
-      assert.ok(layout.membersTop >= layout.boardBottom, '1440px members panel sits below the board');
-      assert.ok(layout.workingTop >= layout.boardBottom, '1440px working-now content sits below the board');
-      assert.ok(layout.activityTop >= layout.boardBottom, '1440px activity panel sits below the board');
-    } else if (expectedColumns === 2) {
+    if (expectedColumns === 2) {
       assert.equal(layout.uniqueTops.length, 2, width + 'px board steps down to two rows of columns');
     } else if (expectedColumns === 1) {
-      assert.ok(layout.uniqueTops.length >= 2, width + 'px board stacks its columns vertically');
+      assert.equal(layout.uniqueTops.length, 4, width + 'px board stacks all four columns vertically');
     }
     await noHorizontalScroll(width, 'board layout');
   }
@@ -341,6 +241,8 @@ async function main(settings) {
     await cdp.call('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'no-preference' }] });
     await cdp.call('Browser.setDownloadBehavior', { behavior: 'allow', downloadPath: settings.downloads, eventsEnabled: true });
     await cdp.call('Page.addScriptToEvaluateOnNewDocument', { source: `
+      window.__cspViolations = [];
+      document.addEventListener('securitypolicyviolation',event=>window.__cspViolations.push(event.violatedDirective));
       window.__notifications = []; window.__permissionRequests = 0;
       class SnapshotNotification {
         static permission = 'default';
@@ -422,26 +324,41 @@ async function main(settings) {
     await cdp.evaluate('document.activeElement.blur()');
     await key('?', 'Slash');
     assert.equal(await cdp.evaluate(`document.getElementById('shortcuts').open`), true, '? opens shortcut help');
-    assert.ok(await cdp.evaluate(`document.getElementById('shortcuts').textContent.includes('[') && document.getElementById('shortcuts').textContent.includes(']')`), 'shortcut help documents both group navigation keys');
+    const shortcuts = await cdp.evaluate(`Array.from(document.querySelectorAll('#shortcuts kbd'),node=>node.textContent)`);
+    for (const shortcut of ['/', 'j', 'k', '?', 'Esc']) assert.ok(shortcuts.includes(shortcut), 'shortcut help retains ' + shortcut);
+    assert.ok(!shortcuts.includes('[') && !shortcuts.includes(']'), 'shortcut help removes the group-only navigation keys');
+    evidence.checks.push('j/k focus navigation, / search, typing guard, ? help and Escape');
     await click('close-shortcuts');
+    await cdp.evaluate(`document.querySelector('#tasks .task-card').focus()`);
+    const ungroupedFocus = await cdp.evaluate('document.activeElement.id');
+    for (const [pressed, code] of [['[', 'BracketLeft'], [']', 'BracketRight']]) {
+      await key(pressed, code);
+      assert.equal(await cdp.evaluate('document.activeElement.id'), ungroupedFocus, pressed + ' no longer changes dashboard navigation or focus');
+      assert.equal(await cdp.evaluate(`localStorage.getItem('agentmesh:current-section')`), null, pressed + ' does not persist removed group selection');
+    }
 
-    for (const [width, expectedColumns] of [[1440, 4], [1000, 2], [760, 2], [640, 1], [390, 1]]) {
+    for (const [width, expectedColumns] of [[1440, 2], [1000, 2], [760, 2], [640, 2], [390, 1]]) {
       await checkBoardLayout(width, expectedColumns);
+      await checkUngroupedLayout(width);
     }
     for (const width of [1440, 390]) {
       await setViewport(width);
-      await checkSectionNavigation(width);
+      await checkUngroupedLayout(width);
       await click('board-view'); await delay(150);
-      assert.equal(await cdp.evaluate(`document.querySelector('#section-nav [aria-current="page"]')?.dataset.section`), 'board', 'Board toolbar and navigation selection stay synchronized');
+      assert.equal(await cdp.evaluate(`document.getElementById('board-view').getAttribute('aria-pressed')`), 'true', 'Board toolbar retains its view selection');
+      await screenshot('dashboard-' + width + '-board');
       await noHorizontalScroll(width, 'board');
       await click('timeline-view');
-      assert.equal(await cdp.evaluate(`document.querySelector('#section-nav [aria-current="page"]')?.dataset.section`), 'timeline', 'Timeline toolbar and navigation selection stay synchronized');
+      assert.equal(await cdp.evaluate(`document.getElementById('timeline-view').getAttribute('aria-pressed')`), 'true', 'Timeline toolbar retains its view selection');
       await waitFor(`!document.getElementById('timeline-panel').hidden && document.querySelectorAll('#timeline-track .timeline-entry').length>=5`, width + 'px timeline');
       const timeline = await cdp.evaluate(`document.getElementById('timeline-track').textContent`);
       assert.ok(timeline.includes('T-101') && timeline.includes('Cosmic transcript marker'), 'timeline includes loaded tasks and messages');
       const times = await cdp.evaluate(`Array.from(document.querySelectorAll('#timeline-track .timeline-entry time'),time=>Date.parse(time.dateTime))`);
       assert.ok(times.every((time, index) => Number.isFinite(time) && (!index || time >= times[index - 1])), 'timeline entries use real chronological timestamps');
       await noHorizontalScroll(width, 'timeline');
+      await cdp.evaluate('window.scrollTo(0,0)');
+      await screenshot('dashboard-' + width + '-timeline');
+      evidence.checks.push(width + 'px board/timeline and no horizontal page scroll');
       await set('global-search', 'Aurora');
       assert.ok(await cdp.evaluate(`document.querySelector('#search-results a[data-kind="task"]') !== null`), 'mobile search remains usable');
       await noHorizontalScroll(width, 'search');
@@ -473,6 +390,8 @@ async function main(settings) {
       assert.ok(markdown.includes('T-101'), button + ' preserves T-keys');
       assert.ok(markdown.includes(button === 'export-board' ? 'Aurora snapshot task' : 'Cosmic transcript marker'), button + ' contains loaded data');
       assert.ok(!markdown.includes(settings.credential), 'export never contains credentials');
+      fs.copyFileSync(path.join(settings.downloads, downloaded), path.join(settings.evidence, button + '.md'));
+      evidence.exports.push(button + '.md');
     }
 
     await click('notify-toggle');
@@ -507,14 +426,16 @@ async function main(settings) {
     assert.deepEqual(await cdp.evaluate('window.__motion.slides'), [], 'reduced-motion preference suppresses task slides');
     assert.equal(await cdp.evaluate('window.__notifications.length'), notificationCount, 'disabled notifications stay off on later events');
 
-    await selectSection('handoffs');
+    assert.deepEqual(await cdp.evaluate('window.__cspViolations'), [], 'all feature interactions have no CSP violations');
+    await click('board-view');
     await cdp.call('Emulation.setDeviceMetricsOverride', { width: 390, height: 1000, deviceScaleFactor: 1, mobile: true });
     await cdp.evaluate('window.__beforeReload=true');
     await cdp.call('Page.reload');
     await waitFor(`window.__beforeReload!==true && document.getElementById('auth')?.hidden && document.querySelectorAll('#tasks .task-card').length===5 && document.getElementById('messages').textContent.includes('Cosmic transcript marker')`, 'reload restores the HttpOnly cookie session without prompting');
-    await waitFor(`document.querySelector('#section-nav [aria-current="page"]')?.dataset.section==='handoffs'`, 'reload restores the current section');
-    assert.ok(await cdp.evaluate(`(() => { const visible=Array.from(document.querySelectorAll('.panel[data-section]')).filter(panel=>panel.getClientRects().length); return visible.length>0 && visible.every(panel=>panel.dataset.section==='handoffs'); })()`), 'restored phone section remains isolated');
-    await noHorizontalScroll(390, 'restored section');
+    await waitFor(`!!document.querySelector('.team-note') && document.getElementById('handoffs-panel').textContent.includes('Orbit handoff marker')`, 'reload restores retained notes and handoffs');
+    await checkUngroupedLayout(390);
+    await noHorizontalScroll(390, 'restored mobile dashboard');
+    evidence.checks.push('cookie sign-in survives reload with notes and handoffs accessible');
     assert.equal(await cdp.evaluate('window.__permissionRequests'), 0, 'reload never requests permission');
     assert.equal(await cdp.evaluate('window.__notifications.length'), 0, 'restoring the page does not notify for its existing records');
     await checkCookiePrivacy('reload');
@@ -523,6 +444,7 @@ async function main(settings) {
     // Closing the authenticated tab must not end a persistent browser session.
     assert.deepEqual(cdp.remoteRequests, [], 'initial tab opens no new network hosts');
     assert.deepEqual(cdp.exceptions, [], 'initial tab has no uncaught browser exceptions');
+    assert.deepEqual(await cdp.evaluate('window.__cspViolations'), [], 'initial tab has no CSP violations');
     await browser.call('Target.closeTarget', { targetId: currentTarget });
     cdp.close();
     const replacement = await openPage();
@@ -542,6 +464,7 @@ async function main(settings) {
       assert.equal((await fresh.cdp.call('Network.getCookies', { urls: [origin.href] })).cookies.some(cookie => cookie.name === 'agentmesh_session'), false, 'fresh profile has no session cookie');
       assert.deepEqual(fresh.cdp.remoteRequests, [], 'fresh profile opens no new network hosts');
       assert.deepEqual(fresh.cdp.exceptions, [], 'fresh profile has no uncaught browser exceptions');
+      assert.deepEqual(await fresh.cdp.evaluate('window.__cspViolations'), [], 'fresh profile has no CSP violations');
     } finally {
       fresh.cdp.close();
       await browser.call('Target.disposeBrowserContext', { browserContextId });
@@ -557,8 +480,24 @@ async function main(settings) {
     assert.equal(await cdp.evaluate(`sessionStorage.getItem('agentmesh:session')`), null, 'sign out remains effective after reload');
     assert.deepEqual(cdp.remoteRequests, [], 'dashboard opens no new network hosts');
     assert.deepEqual(cdp.exceptions, [], 'dashboard has no uncaught browser exceptions');
-    console.log('dashboard-polish-chrome-ok: local snapshot, search, exports, shortcuts, timeline, filters, notifications, mobile, section navigation, persistent HttpOnly cookie sessions and fresh profiles');
-  } finally { for (const session of sessions) session.close(); browser.close(); }
+    for (const session of sessions) assert.deepEqual(session.consoleErrors, [], 'all tabs have no console errors');
+    assert.deepEqual(await cdp.evaluate('window.__cspViolations || []'), [], 'no CSP violations');
+    evidence.checks.push('saved filters/views, notifications off by default and explicit toggle, reduced motion, theme, handoffs/notes, persistent HttpOnly cookie sessions, fresh profile and logout');
+    evidence.result = 'passed';
+    console.log('dashboard-polish-chrome-ok: local snapshot, search, exports, shortcuts, timeline, filters, notifications, mobile, restored ungrouped columns, persistent HttpOnly cookie sessions and fresh profiles');
+  } catch (error) {
+    evidence.error = String(error.stack || error).replaceAll(settings.credential, '[redacted]');
+    await screenshot('polish-failure').catch(() => {});
+    throw error;
+  } finally {
+    evidence.requests = sessions.flatMap(session=>session.requests);
+    evidence.exceptions = sessions.flatMap(session=>session.exceptions);
+    evidence.consoleErrors = sessions.flatMap(session=>session.consoleErrors);
+    evidence.remoteRequests = sessions.flatMap(session=>session.remoteRequests);
+    fs.writeFileSync(path.join(settings.evidence, 'polish-evidence.json'), JSON.stringify(evidence, null, 2) + '\n');
+    for (const session of sessions) session.close();
+    browser.close();
+  }
 }
 
 module.exports = { connect };
